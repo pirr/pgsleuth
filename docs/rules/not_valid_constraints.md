@@ -17,11 +17,59 @@ The expected follow-up is `ALTER TABLE ... VALIDATE CONSTRAINT ...`. When that s
 
 ## Why it matters
 
-`NOT VALID` is a tool, not a state to live in. Three concrete problems with leaving it:
+`NOT VALID` is a tool, not a state to live in. Three concrete problems with leaving it.
 
-1. **The constraint is a lie about your data.** Anyone reading the schema sees `CHECK (total >= 0)` and assumes that holds. It doesn't — only for rows added after the constraint. Bug reports and data-corruption hunts go down the wrong path.
-2. **Reporting and analytics break silently.** A query that joins on a `NOT VALID` foreign key may return rows with no matching parent — exactly the kind of orphan the constraint exists to prevent.
-3. **Subsequent migrations behave unpredictably.** Some operations (e.g. `ALTER TABLE ... ATTACH PARTITION`) treat `NOT VALID` constraints differently from validated ones.
+### 1. The constraint is a lie about your data
+
+Setup:
+
+```sql
+-- already in the table from a buggy older release:
+INSERT INTO orders VALUES (1, -50);   -- total = -50, definitely invalid
+
+-- fix lands later, the team adds the constraint quickly to unblock a deploy:
+ALTER TABLE orders
+    ADD CONSTRAINT orders_total_positive CHECK (total >= 0) NOT VALID;
+-- the team plans to run VALIDATE CONSTRAINT in a follow-up window.
+-- The follow-up never happens.
+```
+
+Now check what the schema *says* versus what's actually true:
+
+```sql
+\d orders
+-- ...
+-- Check constraints:
+--   "orders_total_positive" CHECK (total >= 0)
+
+SELECT * FROM orders WHERE total < 0;
+--  id | total
+-- ----+-------
+--   1 |   -50         ← still there. The constraint isn't enforcing what it claims.
+```
+
+A junior developer reads the schema, assumes `total >= 0` holds, and writes a query / report / dashboard that silently misbehaves on the rows the constraint was supposed to prevent. The bug looks impossible — until you `\d` and miss the absence of "VALID."
+
+### 2. Reporting and analytics break silently
+
+For a `NOT VALID` foreign key, the failure mode is orphan rows:
+
+```sql
+ALTER TABLE orders
+    ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) NOT VALID;
+
+-- the FK enforces against new INSERTs, but old orphans stay:
+SELECT o.id, o.user_id FROM orders o
+LEFT JOIN users u ON u.id = o.user_id
+WHERE u.id IS NULL;
+-- returns rows that "shouldn't exist" per the schema
+```
+
+Any query that assumes "every order has a user" — joins, dashboards, billing reports — quietly produces wrong numbers.
+
+### 3. Subsequent migrations behave unpredictably
+
+Some operations (`ATTACH PARTITION`, `INHERIT`, validation propagation) treat `NOT VALID` constraints differently from validated ones. You hit edge cases at exactly the moment you don't have time for them.
 
 The whole point of `NOT VALID` is to *defer* the lock-heavy full-table scan, run it later, and then validate. Deferring forever defeats the deferral.
 

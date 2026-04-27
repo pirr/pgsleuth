@@ -19,11 +19,20 @@ CREATE TABLE users (
 
 Boolean is the type that makes the strongest implicit promise: "this is yes or no." A nullable boolean breaks that promise — every value is `true`, `false`, **or** `null`, and almost no application code is written to handle the third case.
 
-Concrete consequences:
+Concrete consequences with a 1000-row `users` table where 600 have `is_admin = false`, 50 have `true`, and 350 have `null`:
 
-1. **`WHERE is_admin = false` doesn't return null rows.** Three-valued logic: `null = false` is `null`, not `true`. So a query for "non-admins" silently excludes everyone whose `is_admin` was never set. The bug shows up as "where did half my users go?"
-2. **`WHERE NOT is_admin` has the same problem.** `NOT null` is `null`. The fix is `WHERE is_admin IS DISTINCT FROM true` or `WHERE COALESCE(is_admin, false) = false` — neither of which anyone remembers to write.
-3. **Application code branches on `if user.is_admin:` and treats `null` as falsy.** Often correct by accident. Sometimes catastrophically wrong (a `null`-handling library treats `null` as truthy, a frontend renders `null` differently from `false`, etc.).
+```sql
+SELECT count(*) FROM users WHERE is_admin = false;  -- returns 600  ❌
+SELECT count(*) FROM users WHERE NOT is_admin;      -- returns 600  ❌
+SELECT count(*) FROM users WHERE is_admin IS DISTINCT FROM true;  -- returns 950 ✅
+```
+
+What just happened to the 350 nulls?
+
+1. **`WHERE is_admin = false` doesn't return null rows.** SQL three-valued logic: `null = false` evaluates to `null`, not `true`, so the row is excluded. Your "show all non-admins" query silently drops 35% of the user base.
+2. **`WHERE NOT is_admin` has the same problem.** `NOT null` is `null`. Both forms look obviously correct and are obviously wrong.
+3. **The fix is verbose.** `WHERE is_admin IS DISTINCT FROM true` or `WHERE COALESCE(is_admin, false) = false` works, but nobody remembers to write it that way the first time. Reviewers don't catch it. ORMs generate the simple form.
+4. **Application code branches on `if user.is_admin:` and treats `null` as falsy.** Often correct by accident. Sometimes catastrophically wrong — a null-handling library treats `null` as truthy, the frontend renders `null` differently from `false`, etc.
 
 The fix is almost always to pick a concrete default and add `NOT NULL`. If `null` actually carries meaning ("we don't know yet" vs "no"), the column should be modeled as a small `enum` or three-state state machine, not as a boolean.
 

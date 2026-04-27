@@ -20,13 +20,37 @@ The check uses `pg_constraint` joined to `pg_index`; an index whose first column
 
 ## Why it matters
 
-Two real costs, both invisible until production traffic finds them:
+Two real costs, both invisible until production traffic finds them.
 
-1. **Cascades and parent-side mutations seq-scan the child table.** When you `DELETE` or `UPDATE` a row in the parent, Postgres must locate every referencing row in the child. Without an index on the FK column, that's a full table scan **per parent row affected**. A migration that deletes 10,000 users from the parent quietly turns into 10,000 sequential scans on `orders`.
+### 1. Parent-side `DELETE` / `UPDATE` seq-scans the child, **per row**
 
-2. **Joins from parent to child miss the obvious access path.** `SELECT * FROM users JOIN orders USING (id)` is the single most common query shape in any application. Without an index on `orders.user_id`, the planner is forced into hash join or nested loop with seq-scan — fine at 10k rows, catastrophic at 10M.
+When you `DELETE` or `UPDATE` a row in the parent, Postgres must find every referencing row in the child to enforce the FK (or to cascade). Without an index on the FK column, that's a full table scan of the child — and Postgres does it **once per affected parent row**.
 
-This is the single most common source of "the query was fast in dev and is now timing out in prod" tickets.
+A migration that deletes 10,000 users:
+
+```sql
+DELETE FROM users WHERE deleted_at < now() - interval '2 years';
+-- 10,000 rows deleted on prod
+```
+
+…silently runs 10,000 sequential scans on `orders`. With 50M rows in `orders`, that's 500 billion row visits before the migration finishes. The migration window blows up from a minute to half a day, and the table is locked the whole time.
+
+### 2. The most common application query — parent-to-child join — falls off the index
+
+```sql
+SELECT * FROM users u JOIN orders o ON u.id = o.user_id WHERE u.id = $1;
+```
+
+This is the single most common query shape in any line-of-business app: "show me everything related to user X." With an index on `orders(user_id)` it's an index lookup. Without:
+
+```text
+Nested Loop  (cost=0.42..312918.47 rows=42 width=...)
+  -> Index Scan using users_pkey on users   (rows=1)
+  -> Seq Scan on orders                     ← scans all 50M rows
+        Filter: (user_id = $1)
+```
+
+Fast in dev (10k rows), brutal in prod (50M rows). This is the single most common source of "the query was fast in dev and is now timing out in prod" tickets.
 
 ## How to fix
 

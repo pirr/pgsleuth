@@ -21,11 +21,31 @@ Excluded by design:
 
 ## Why it matters
 
-The redundant index is pure cost with no benefit:
+The redundant index is pure cost with no benefit.
 
-1. **Write amplification.** Every `INSERT` / `UPDATE` on an indexed column updates *every* matching index. A redundant index doubles the write work for any operation that touches its key columns.
-2. **Disk and shared-buffer space.** Bloated table, bloated cache footprint.
-3. **Plan-time confusion.** The planner has to consider both indexes for every relevant query and pick one — usually correctly, occasionally not. Removing the loser saves the planner work and makes plan stability easier.
+### 1. Write amplification — every write pays twice
+
+Postgres updates **every** index whose key columns are touched by an `INSERT` / `UPDATE`. With the example above:
+
+```sql
+INSERT INTO orders (user_id, created_at, ...) VALUES (...);
+```
+
+Postgres has to:
+
+1. Insert the row into the heap.
+2. Insert into `idx_a (user_id)`.
+3. Insert into `idx_b (user_id, created_at)`.
+
+Step 2 is pure waste — `idx_b` already covers every query that `idx_a` could satisfy. Same for `UPDATE`s that change `user_id`. On a write-heavy table that's measurable extra latency, extra WAL volume, and extra autovacuum pressure.
+
+### 2. Disk and shared-buffer space
+
+The redundant index occupies disk and competes for buffer cache pages with indexes that actually pull weight. On a 50M-row table, an unnecessary index can be tens of GB and push hot pages out of cache.
+
+### 3. Plan-time confusion
+
+The planner has to consider both indexes for every relevant query and pick one. Usually it picks correctly. Occasionally it doesn't — under skewed statistics or after a stats refresh, plan flips between the two cause inexplicable latency spikes. Dropping the loser eliminates the choice.
 
 This is **info severity** because the cost is real but rarely production-critical, and false positives are conceivable (see *When to ignore*).
 

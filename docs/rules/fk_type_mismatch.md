@@ -22,11 +22,50 @@ The check compares `format_type(...)` output for child and parent columns, so it
 
 Three real costs:
 
-1. **Silent casts on every join.** `users.id = orders.user_id` becomes `users.id = orders.user_id::bigint` under the hood. The cast is per-row, the planner can't always push it down to use an index, and you get nested-loop plans where you wanted hash joins.
-2. **Index unusability in some plans.** An index on `orders(user_id)` (integer) is **not directly usable** to satisfy a query parameterized as `bigint`. Postgres sometimes works around it, sometimes doesn't — the failures are version- and statistics-dependent, which makes them maddening to debug.
-3. **Range mismatch.** A 32-bit `integer` FK can't reference all valid 64-bit `bigint` parent rows. The constraint will eventually start rejecting writes that should logically succeed once the parent table grows past 2.1B.
+### 1. Silent casts on every join — sometimes blocking index use
 
-This is almost always a bug — someone copied a `serial` column shape onto an FK that should have been `bigint`, or evolved the parent's type without evolving the child.
+When the column types differ, every join condition `users.id = orders.user_id` is rewritten internally as `users.id = orders.user_id::bigint`. The cast is per-row, and the planner can't always push it through to use an existing index.
+
+Concretely, with the schema above (`users.id` is `bigint`, `orders.user_id` is `integer`, both columns indexed):
+
+```sql
+EXPLAIN ANALYZE
+SELECT u.* FROM users u JOIN orders o ON u.id = o.user_id WHERE u.id = 42;
+```
+
+```text
+-- Types match (both bigint):
+Nested Loop  (cost=0.85..16.91 rows=2 width=...)
+  -> Index Scan using users_pkey on users     (rows=1)
+        Index Cond: (id = 42)
+  -> Index Scan using orders_user_id_idx on orders   ← uses the index
+        Index Cond: (user_id = 42)
+
+-- Types differ (orders.user_id is integer):
+Nested Loop  (cost=0.42..5421.13 rows=2 width=...)
+  -> Index Scan using users_pkey on users     (rows=1)
+  -> Seq Scan on orders                       ← falls back to seq scan
+        Filter: ((user_id)::bigint = 42)
+```
+
+The seq scan is on every joined row. At 10M rows in `orders`, what should be a microsecond join becomes a several-second one.
+
+### 2. Range mismatch eventually rejects writes
+
+A 32-bit `integer` FK can't reference all valid 64-bit `bigint` parent rows. Once the parent table grows past 2.1B and starts issuing `bigint` ids that don't fit in `integer`, every `INSERT` into the child fails:
+
+```text
+INSERT INTO orders (user_id, ...) VALUES (3000000000, ...);
+ERROR:  integer out of range
+```
+
+This is the same overflow described in [`primary_key_type`](primary_key_type.md), but on the child side and harder to diagnose because the schema *looks* internally consistent.
+
+### 3. The opposite: child type wider than parent
+
+If the parent is `integer` and the child is `bigint`, the join still casts (one direction or the other) and the same index-use issues apply. There's no scenario where mismatched types are *better* than matched.
+
+This is almost always a bug — someone copied a `serial` column shape onto an FK that should have been `bigint`, or evolved the parent's type (`primary_key_type` migration) without evolving the children.
 
 ## How to fix
 
