@@ -45,18 +45,18 @@ Exit codes: `0` = clean, `1` = issues found, `2` = error.
 
 ## Checks
 
-| Name                   | Catches                                                                       |
-| ---------------------- | ----------------------------------------------------------------------------- |
-| `missing_primary_key`  | Ordinary tables without a PK (breaks logical replication, ambiguous rows).    |
-| `primary_key_type`     | Primary keys whose type can run out of values (e.g. `int4` on a hot table).   |
-| `missing_fk_index`     | Foreign-key columns without a covering index — slow joins, slow `ON DELETE`. |
-| `fk_type_mismatch`     | FK columns whose type differs from the referenced PK/unique column.           |
-| `redundant_index`      | Indexes whose column list is a strict prefix of another index on the table.   |
-| `not_valid_constraints`| FK and CHECK constraints stuck at `NOT VALID` (`convalidated = false`).       |
-| `sequence_drift`       | Sequences whose `nextval` would collide with rows already in the table.       |
-| `three_state_boolean`  | Boolean columns without `NOT NULL` (true / false / null is rarely intended).  |
+| Name | Catches |
+| --- | --- |
+| [`missing_primary_key`](docs/rules/missing_primary_key.md) | Ordinary tables without a PK (breaks logical replication, ambiguous rows). |
+| [`primary_key_type`](docs/rules/primary_key_type.md) | Primary keys whose type can run out of values (e.g. `int4` on a hot table). |
+| [`missing_fk_index`](docs/rules/missing_fk_index.md) | Foreign-key columns without a covering index — slow joins, slow `ON DELETE`. |
+| [`fk_type_mismatch`](docs/rules/fk_type_mismatch.md) | FK columns whose type differs from the referenced PK/unique column. |
+| [`redundant_index`](docs/rules/redundant_index.md) | Indexes whose column list is a strict prefix of another index on the table. |
+| [`not_valid_constraints`](docs/rules/not_valid_constraints.md) | FK and CHECK constraints stuck at `NOT VALID` (`convalidated = false`). |
+| [`sequence_drift`](docs/rules/sequence_drift.md) | Sequences whose `nextval` would collide with rows already in the table. |
+| [`three_state_boolean`](docs/rules/three_state_boolean.md) | Boolean columns without `NOT NULL` (true / false / null is rarely intended). |
 
-Each issue carries a severity (`info` / `warning` / `error`), a fully-qualified object name, a human-readable message, and — where applicable — a suggested fix and a link to the relevant Postgres docs.
+Every rule has a dedicated page covering rationale, examples, fix SQL, and "when to ignore." Each reported `Issue` carries a `docs_url` pointing at the rule's page, plus a severity (`info` / `warning` / `error`), a fully-qualified object name, a human-readable message, and a suggested fix.
 
 ## Configuration
 
