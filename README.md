@@ -58,6 +58,8 @@ Exit codes: `0` = clean, `1` = issues found, `2` = error.
 
 Each issue carries a severity (`info` / `warning` / `error`), a fully-qualified object name, a human-readable message, and — where applicable — a suggested fix and a link to the relevant Postgres docs.
 
+Severity is intentional, not arbitrary — see [`docs/severity.md`](docs/severity.md) for the full philosophy, the per-rule rationale, and `--min-severity` guidance for CI.
+
 ## Configuration
 
 Pass a TOML config file with `--config`:
