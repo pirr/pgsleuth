@@ -42,28 +42,38 @@ def list_checkers() -> None:
 @main.command("check")
 @click.option("--dsn", required=True, envvar="GOOD_DB_DSN", help="Postgres DSN.")
 @click.option(
-    "--checkers", "checker_filter", default=None,
+    "--checkers",
+    "checker_filter",
+    default=None,
     help="Comma-separated list of checker names to run (default: all).",
 )
 @click.option(
-    "--exclude-schema", "exclude_schemas", multiple=True,
-    help=(
-        "Schemas to skip. Pass multiple times. Default: "
-        f"{', '.join(DEFAULT_EXCLUDED_SCHEMAS)}."
-    ),
+    "--exclude-schema",
+    "exclude_schemas",
+    multiple=True,
+    help=(f"Schemas to skip. Pass multiple times. Default: {', '.join(DEFAULT_EXCLUDED_SCHEMAS)}."),
 )
 @click.option(
-    "--exclude-table", "exclude_tables", multiple=True,
+    "--exclude-table",
+    "exclude_tables",
+    multiple=True,
     help="Regex pattern for tables to skip. Pass multiple times.",
 )
 @click.option(
-    "--format", "output_format", type=click.Choice(["text", "json"]), default="text",
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
 )
 @click.option(
-    "--min-severity", type=click.Choice([s.value for s in Severity]), default="info",
+    "--min-severity",
+    type=click.Choice([s.value for s in Severity]),
+    default="info",
 )
 @click.option(
-    "--config", "config_path", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
 )
 def check(
     dsn: str,
@@ -82,7 +92,9 @@ def check(
     if exclude_tables:
         config.excluded_table_patterns = tuple(re.compile(p) for p in exclude_tables)
     if checker_filter:
-        config.enabled_checkers = frozenset(s.strip() for s in checker_filter.split(",") if s.strip())
+        config.enabled_checkers = frozenset(
+            s.strip() for s in checker_filter.split(",") if s.strip()
+        )
         for name in config.enabled_checkers:
             if name not in registry.names():
                 raise click.UsageError(f"unknown checker: {name!r}")

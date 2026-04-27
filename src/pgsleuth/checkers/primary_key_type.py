@@ -33,9 +33,7 @@ ORDER BY n.nspname, c.relname, a.attname;
 
 class PrimaryKeyType(Checker):
     name: ClassVar[str] = "primary_key_type"
-    description: ClassVar[str] = (
-        "Primary keys typed as integer/smallint will eventually overflow."
-    )
+    description: ClassVar[str] = "Primary keys typed as integer/smallint will eventually overflow."
     default_severity: ClassVar[Severity] = Severity.WARNING
 
     def run(self, ctx: CheckerContext) -> Iterable[Issue]:

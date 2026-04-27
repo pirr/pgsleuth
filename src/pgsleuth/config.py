@@ -49,9 +49,7 @@ class Config:
         data = tomllib.loads(path.read_text())
         section = data.get("pgsleuth", {})
         excluded_schemas = tuple(section.get("exclude_schemas", DEFAULT_EXCLUDED_SCHEMAS))
-        excluded_table_patterns = tuple(
-            re.compile(p) for p in section.get("exclude_tables", [])
-        )
+        excluded_table_patterns = tuple(re.compile(p) for p in section.get("exclude_tables", []))
 
         overrides: dict[str, CheckerOverride] = {}
         for name, opts in section.get("checkers", {}).items():

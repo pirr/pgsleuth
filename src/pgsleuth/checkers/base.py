@@ -25,8 +25,8 @@ class Severity(str, Enum):
 class Issue:
     checker: str
     severity: Severity
-    object_type: str          # "table" | "column" | "index" | "constraint" | "sequence"
-    object_name: str          # fully qualified, e.g. "public.users.email"
+    object_type: str  # "table" | "column" | "index" | "constraint" | "sequence"
+    object_name: str  # fully qualified, e.g. "public.users.email"
     message: str
     suggestion: str | None = None
     docs_url: str | None = None

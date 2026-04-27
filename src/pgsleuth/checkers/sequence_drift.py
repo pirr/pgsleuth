@@ -66,7 +66,10 @@ class SequenceDrift(Checker):
 
             seq_qualified = f"{row['seq_schema']}.{row['seq_name']}"
             next_value = self._next_value(
-                ctx.conn, row["seq_schema"], row["seq_name"], row["increment_by"],
+                ctx.conn,
+                row["seq_schema"],
+                row["seq_name"],
+                row["increment_by"],
             )
             max_value = self._max_value(
                 ctx.conn,
@@ -105,7 +108,10 @@ class SequenceDrift(Checker):
 
     @staticmethod
     def _next_value(
-        conn: psycopg.Connection, schema: str, name: str, increment_by: int,
+        conn: psycopg.Connection,
+        schema: str,
+        name: str,
+        increment_by: int,
     ) -> int | None:
         # Read directly from the sequence relation. pg_sequences.last_value is
         # NULL while is_called=false, which would mask exactly the drift state
@@ -123,7 +129,10 @@ class SequenceDrift(Checker):
 
     @staticmethod
     def _max_value(
-        conn: psycopg.Connection, schema: str, table: str, column: str,
+        conn: psycopg.Connection,
+        schema: str,
+        table: str,
+        column: str,
     ) -> int | None:
         query = sql.SQL("SELECT MAX({col}) FROM {tbl}").format(
             col=sql.Identifier(column),

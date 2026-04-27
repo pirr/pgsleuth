@@ -5,8 +5,7 @@ def test_clean_when_types_match(ctx, conn, schema):
     with conn.cursor() as cur:
         cur.execute("CREATE TABLE parent (id bigint PRIMARY KEY)")
         cur.execute(
-            "CREATE TABLE child (id bigserial PRIMARY KEY, "
-            "parent_id bigint REFERENCES parent(id))"
+            "CREATE TABLE child (id bigserial PRIMARY KEY, parent_id bigint REFERENCES parent(id))"
         )
 
     issues = [i for i in ForeignKeyTypeMismatch().run(ctx) if i.object_name.startswith(schema)]
@@ -17,8 +16,7 @@ def test_flags_mismatch(ctx, conn, schema):
     with conn.cursor() as cur:
         cur.execute("CREATE TABLE parent (id bigint PRIMARY KEY)")
         cur.execute(
-            "CREATE TABLE child (id bigserial PRIMARY KEY, "
-            "parent_id integer REFERENCES parent(id))"
+            "CREATE TABLE child (id bigserial PRIMARY KEY, parent_id integer REFERENCES parent(id))"
         )
 
     issues = [i for i in ForeignKeyTypeMismatch().run(ctx) if i.object_name.startswith(schema)]

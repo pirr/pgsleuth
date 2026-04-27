@@ -51,9 +51,7 @@ ORDER BY fk.schema, fk.table, fk.conname;
 
 class ForeignKeyTypeMismatch(Checker):
     name: ClassVar[str] = "fk_type_mismatch"
-    description: ClassVar[str] = (
-        "Foreign key column type differs from the referenced column type."
-    )
+    description: ClassVar[str] = "Foreign key column type differs from the referenced column type."
     default_severity: ClassVar[Severity] = Severity.ERROR
 
     def run(self, ctx: CheckerContext) -> Iterable[Issue]:

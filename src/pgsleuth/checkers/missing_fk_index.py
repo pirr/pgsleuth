@@ -59,12 +59,8 @@ class MissingForeignKeyIndex(Checker):
                 severity=ctx.config.severity_for(self.name, self.default_severity),
                 object_type="constraint",
                 object_name=obj,
-                message=(
-                    f"Foreign key {row['constraint_name']!r} on {obj} has no covering index."
-                ),
-                suggestion=(
-                    f"CREATE INDEX ON {row['schema']}.{row['table']} ({cols});"
-                ),
+                message=(f"Foreign key {row['constraint_name']!r} on {obj} has no covering index."),
+                suggestion=(f"CREATE INDEX ON {row['schema']}.{row['table']} ({cols});"),
                 docs_url="https://www.postgresql.org/docs/15/indexes-multicolumn.html",
             )
 

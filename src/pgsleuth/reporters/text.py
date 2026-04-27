@@ -44,7 +44,5 @@ def render(issues: Iterable[Issue], console: Console | None = None) -> None:
     counts = defaultdict(int)
     for issue in issues:
         counts[issue.severity] += 1
-    summary_parts = [
-        f"[{_COLOR[s]}]{counts[s]} {s.value}[/]" for s in Severity if counts[s]
-    ]
+    summary_parts = [f"[{_COLOR[s]}]{counts[s]} {s.value}[/]" for s in Severity if counts[s]]
     console.print("Summary: " + ", ".join(summary_parts))
