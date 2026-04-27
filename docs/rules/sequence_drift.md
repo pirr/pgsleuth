@@ -5,15 +5,63 @@
 
 ## What it catches
 
-For every sequence owned by a column (via `pg_depend.deptype = 'a'`, the relationship `bigserial` / `GENERATED ... AS IDENTITY` creates), pgsleuth compares the sequence's next-issue value to `MAX(owner_column)`. If `nextval ≤ MAX(...)`, the very next `INSERT` will collide.
+For every sequence owned by a column (via `pg_depend.deptype = 'a'`, the relationship `bigserial` / `GENERATED ... AS IDENTITY` creates), pgsleuth compares the sequence's next-issue value to `MAX(owner_column)`. If `nextval ≤ MAX(...)`, the very next `INSERT` without an explicit `id` will collide with a row that already exists.
+
+### A worked example
+
+Imagine `orders.id` is a `bigserial` column. Three things to keep in mind:
+
+| | Value |
+| --- | --- |
+| Highest `id` already in `orders`         | **89000** |
+| `orders_id_seq.last_value`               | **12345** (the sequence is *behind* the table) |
+| What `nextval('orders_id_seq')` returns next | `last_value + 1` → **12346** |
+
+How does the sequence end up *behind* the table?  The most common way:
 
 ```text
-sequence orders_id_seq:  last_value=12345, is_called=true → next = 12346
-column   orders.id   :  MAX = 89000
--- ⚠️  next INSERT will fail with duplicate key value
+1. Production has rows in `orders` with id up to 89000.
+   The production sequence is also at 89000.
+
+2. Someone runs `pg_dump` and `pg_restore` into staging.
+   pg_restore COPYs the rows in (with explicit ids up to 89000),
+   then sets the sequence to whatever value was in the dump —
+   which can be much lower than the actual MAX(id).
+
+3. Staging is now in this state:
+     orders                   →  rows with id 1 .. 89000
+     orders_id_seq.last_value →  12345   ← stale
 ```
 
-pgsleuth reads `last_value` directly from the sequence relation rather than from `pg_sequences`, because `pg_sequences.last_value` is `NULL` when `is_called = false` — exactly the state we care about (sequence reset but never advanced).
+(Or: someone ran `INSERT INTO orders (id, ...) VALUES (50000, ...)` by hand, bypassing `nextval()`. Same end state.)
+
+Now the application sends a normal write:
+
+```sql
+INSERT INTO orders (customer_id, total) VALUES (1, 99.00);
+-- no explicit id, so Postgres calls nextval('orders_id_seq')
+```
+
+Postgres' steps:
+
+```text
+1. nextval('orders_id_seq')                  → returns 12346
+2. INSERT row with id = 12346 into orders
+3. orders already has a row with id = 12346  → unique violation
+```
+
+The user sees:
+
+```text
+ERROR:  duplicate key value violates unique constraint "orders_pkey"
+DETAIL: Key (id)=(12346) already exists.
+```
+
+Every plain `INSERT` will keep failing this way until the sequence is advanced past 89000.
+
+### Implementation note
+
+pgsleuth reads `last_value` directly from the sequence relation rather than from `pg_sequences`, because `pg_sequences.last_value` is `NULL` while `is_called = false` — exactly the state we care about (sequence reset and never called yet).
 
 ## Why it matters
 
