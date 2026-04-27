@@ -40,7 +40,7 @@ def list_checkers() -> None:
 
 
 @main.command("check")
-@click.option("--dsn", required=True, envvar="GOOD_DB_DSN", help="Postgres DSN.")
+@click.option("--dsn", required=True, envvar="PGSLEUTH_DSN", help="Postgres DSN.")
 @click.option(
     "--checkers",
     "checker_filter",

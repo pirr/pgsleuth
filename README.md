@@ -20,6 +20,13 @@ pip install -e '.[dev]'
 pgsleuth check --dsn postgresql://user:pw@host/db
 ```
 
+Or via env var:
+
+```bash
+export PGSLEUTH_DSN=postgresql://user:pw@host/db
+pgsleuth check
+```
+
 Filter to specific checkers, change output format, or raise the severity floor:
 
 ```bash
