@@ -12,7 +12,7 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import pg_docs_url
+from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 WITH idx AS (
@@ -81,7 +81,7 @@ class RedundantIndex(Checker):
                     f"is a prefix of {row['covering_index']!r}."
                 ),
                 suggestion=f"DROP INDEX {row['schema']}.{row['redundant_index']};",
-                docs_url=pg_docs_url(ctx.server_version, "indexes-multicolumn.html"),
+                docs_url=rule_docs_url(self.name),
             )
 
 

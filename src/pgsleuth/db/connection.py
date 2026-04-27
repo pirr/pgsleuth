@@ -38,3 +38,15 @@ def pg_docs_url(server_version: int, page: str) -> str:
     """
     major = server_version // 10000
     return f"https://www.postgresql.org/docs/{major}/{page}"
+
+
+def rule_docs_url(name: str) -> str:
+    """Return the URL to the pgsleuth rule documentation for a checker.
+
+    Rule docs live in the project repo under docs/rules/<name>.md and are
+    rendered by GitHub. Linking here (instead of straight to the Postgres
+    docs) gives every Issue a place to explain *why* the rule exists and
+    when it's safe to ignore — Postgres docs themselves are linked from
+    inside each rule page as further reading.
+    """
+    return f"https://github.com/pirr/pgsleuth/blob/main/docs/rules/{name}.md"

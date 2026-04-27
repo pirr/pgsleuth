@@ -12,7 +12,7 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import pg_docs_url
+from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 SELECT
@@ -55,7 +55,7 @@ class MissingPrimaryKey(Checker):
                     f"ALTER TABLE {obj} ADD COLUMN id bigserial PRIMARY KEY; "
                     f"-- or pick an existing unique column"
                 ),
-                docs_url=pg_docs_url(ctx.server_version, "ddl-constraints.html"),
+                docs_url=rule_docs_url(self.name),
             )
 
 

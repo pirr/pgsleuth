@@ -8,7 +8,12 @@ import psycopg
 
 from pgsleuth.checkers.base import Checker, Issue
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.connection import SUPPORTED_VERSION_MIN, pg_docs_url, server_version_num
+from pgsleuth.db.connection import (
+    SUPPORTED_VERSION_MIN,
+    pg_docs_url,
+    rule_docs_url,
+    server_version_num,
+)
 
 
 def test_server_version_num_returns_int(conn: psycopg.Connection) -> None:
@@ -71,4 +76,10 @@ def test_pg_docs_url_uses_connected_major() -> None:
     )
     assert pg_docs_url(100023, "functions-sequence.html") == (
         "https://www.postgresql.org/docs/10/functions-sequence.html"
+    )
+
+
+def test_rule_docs_url_points_to_repo_markdown() -> None:
+    assert rule_docs_url("missing_fk_index") == (
+        "https://github.com/pirr/pgsleuth/blob/main/docs/rules/missing_fk_index.md"
     )
