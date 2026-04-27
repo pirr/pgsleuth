@@ -13,6 +13,7 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
+from pgsleuth.db.connection import pg_docs_url
 
 _SQL = """
 SELECT
@@ -61,7 +62,7 @@ class MissingForeignKeyIndex(Checker):
                 object_name=obj,
                 message=(f"Foreign key {row['constraint_name']!r} on {obj} has no covering index."),
                 suggestion=(f"CREATE INDEX ON {row['schema']}.{row['table']} ({cols});"),
-                docs_url="https://www.postgresql.org/docs/15/indexes-multicolumn.html",
+                docs_url=pg_docs_url(ctx.server_version, "indexes-multicolumn.html"),
             )
 
 

@@ -21,6 +21,7 @@ from psycopg import sql
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
+from pgsleuth.db.connection import pg_docs_url
 
 _OWNED_SEQUENCES_SQL = """
 SELECT
@@ -99,7 +100,7 @@ class SequenceDrift(Checker):
                     f"(SELECT MAX({row['column_name']}) FROM "
                     f"{row['table_schema']}.{row['table_name']}));"
                 ),
-                docs_url="https://www.postgresql.org/docs/15/functions-sequence.html",
+                docs_url=pg_docs_url(ctx.server_version, "functions-sequence.html"),
                 extra={
                     "next_value": str(next_value),
                     "max_value": str(max_value),

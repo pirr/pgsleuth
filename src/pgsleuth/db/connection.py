@@ -26,3 +26,15 @@ def server_version_num(conn: psycopg.Connection) -> int:
     if not row:
         raise RuntimeError("server_version_num returned no row")
     return row[0]
+
+
+def pg_docs_url(server_version: int, page: str) -> str:
+    """Build a versioned PostgreSQL docs URL for the connected server.
+
+    pgsleuth supports PG 10+, where the major version is encoded as
+    server_version // 10000 (e.g. 150004 -> 15). Pinning the URL to the
+    actual server version means users land on docs that describe the
+    behavior they will actually see, not whatever the latest release does.
+    """
+    major = server_version // 10000
+    return f"https://www.postgresql.org/docs/{major}/{page}"

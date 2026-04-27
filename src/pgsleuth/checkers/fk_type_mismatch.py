@@ -11,6 +11,7 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
+from pgsleuth.db.connection import pg_docs_url
 
 _SQL = """
 WITH fk AS (
@@ -76,7 +77,7 @@ class ForeignKeyTypeMismatch(Checker):
                     f"ALTER TABLE {row['schema']}.{row['table']} "
                     f"ALTER COLUMN {row['column']} TYPE {row['ref_column_type']};"
                 ),
-                docs_url="https://www.postgresql.org/docs/15/sql-altertable.html",
+                docs_url=pg_docs_url(ctx.server_version, "sql-altertable.html"),
             )
 
 

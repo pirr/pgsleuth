@@ -8,7 +8,7 @@ import psycopg
 
 from pgsleuth.checkers.base import Checker, Issue
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.connection import SUPPORTED_VERSION_MIN, server_version_num
+from pgsleuth.db.connection import SUPPORTED_VERSION_MIN, pg_docs_url, server_version_num
 
 
 def test_server_version_num_returns_int(conn: psycopg.Connection) -> None:
@@ -60,3 +60,15 @@ def test_supports_max_exclusive() -> None:
     assert _Range.supports(120000)
     assert _Range.supports(140000)
     assert not _Range.supports(150000)
+
+
+def test_pg_docs_url_uses_connected_major() -> None:
+    assert pg_docs_url(150004, "ddl-constraints.html") == (
+        "https://www.postgresql.org/docs/15/ddl-constraints.html"
+    )
+    assert pg_docs_url(170000, "indexes-multicolumn.html") == (
+        "https://www.postgresql.org/docs/17/indexes-multicolumn.html"
+    )
+    assert pg_docs_url(100023, "functions-sequence.html") == (
+        "https://www.postgresql.org/docs/10/functions-sequence.html"
+    )
