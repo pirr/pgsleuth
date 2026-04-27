@@ -58,6 +58,8 @@ Exit codes: `0` = clean, `1` = issues found, `2` = error.
 
 Every rule has a dedicated page covering rationale, examples, fix SQL, and "when to ignore." Each reported `Issue` carries a `docs_url` pointing at the rule's page, plus a severity (`info` / `warning` / `error`), a fully-qualified object name, a human-readable message, and a suggested fix.
 
+Severity is intentional, not arbitrary — see [`docs/severity.md`](docs/severity.md) for the full philosophy, the per-rule rationale, and `--min-severity` guidance for CI.
+
 ## Configuration
 
 Pass a TOML config file with `--config`:
