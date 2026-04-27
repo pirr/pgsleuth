@@ -103,6 +103,8 @@ pytest -v
 
 The test suite spins up real PostgreSQL containers (10, 13, 15, 17) via `testcontainers` and runs every check against each — Docker required.
 
+See [`ROADMAP.md`](ROADMAP.md) for what's coming and how to pick up an item.
+
 ## License
 
 MIT.
