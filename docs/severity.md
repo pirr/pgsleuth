@@ -36,6 +36,7 @@ By default, `pgsleuth check` runs at `--min-severity info`, which means warnings
 | --- | --- |
 | `missing_primary_key` | Logical replication breaks, ORM identity becomes ambiguous, common tooling refuses to operate. |
 | `primary_key_type` | `integer` PK overflow is months or years away on most tables; the migration to fix it is the painful part. |
+| `column_value_at_risk` | Sequence-backed columns past 70% of `max_value` will overflow soon. Reactive companion to `primary_key_type` — fires before the failure but after the runway is short. |
 | `missing_fk_index` | Slow cascades and slow joins. Often invisible until a parent-side `DELETE` migration or a 10× traffic spike. |
 | `three_state_boolean` | `WHERE col = false` silently excludes nulls. Bug surfaces as "where did half my users go?" under SQL three-valued logic. |
 

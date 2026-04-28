@@ -1,0 +1,73 @@
+"""Tests for the column_value_at_risk checker."""
+
+from __future__ import annotations
+
+from pgsleuth.checkers.column_value_at_risk import ColumnValueAtRisk
+
+
+def test_clean_when_sequence_well_below_threshold(ctx, conn, schema):
+    """Fresh serial PK has last_value=1; nowhere near max."""
+    with conn.cursor() as cur:
+        cur.execute("CREATE TABLE t (id serial PRIMARY KEY)")
+        # SERIAL does not 'call' the sequence on table creation, so
+        # last_value reads as NULL via pg_sequences. Force a single call so
+        # we exercise the same code path used by populated sequences.
+        cur.execute("INSERT INTO t DEFAULT VALUES")
+
+    issues = [i for i in ColumnValueAtRisk().run(ctx) if i.object_name.startswith(schema)]
+    assert issues == []
+
+
+def test_flags_int4_serial_pk_near_max(ctx, conn, schema):
+    """Advancing the sequence past 70% of int4 max trips the rule."""
+    with conn.cursor() as cur:
+        cur.execute("CREATE TABLE t (id serial PRIMARY KEY)")
+        cur.execute(f"SELECT setval('{schema}.t_id_seq', 1700000000)")  # ~79% of 2^31-1
+
+    issues = [i for i in ColumnValueAtRisk().run(ctx) if i.object_name.startswith(schema)]
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.object_name.endswith(".t.id")
+    assert issue.object_type == "column"
+    assert "ALTER COLUMN id TYPE bigint" in issue.suggestion
+    # extras carry numeric context
+    assert "last_value" in issue.extra
+    assert "max_value" in issue.extra
+    assert "sequence" in issue.extra
+    # ratio formatted to 6 decimals
+    assert float(issue.extra["ratio"]) > 0.70
+
+
+def test_flags_non_pk_serial_column(ctx, conn, schema):
+    """A serial column that is NOT a primary key is still flagged."""
+    with conn.cursor() as cur:
+        # serial column with UNIQUE — sequence is owned by the column via
+        # pg_depend deptype='a', identical relationship as a SERIAL PK.
+        cur.execute("CREATE TABLE t (id serial UNIQUE, payload text)")
+        cur.execute(f"SELECT setval('{schema}.t_id_seq', 1700000000)")
+
+    issues = [i for i in ColumnValueAtRisk().run(ctx) if i.object_name.startswith(schema)]
+    assert len(issues) == 1
+    assert issues[0].object_name.endswith(".t.id")
+
+
+def test_clean_for_cycle_sequence(ctx, conn, schema):
+    """Cycle sequences wrap; near-max is not a problem for them."""
+    with conn.cursor() as cur:
+        cur.execute("CREATE SEQUENCE cyc_seq AS integer CYCLE MINVALUE 1 MAXVALUE 2147483647")
+        cur.execute(f"CREATE TABLE t (id integer DEFAULT nextval('{schema}.cyc_seq'))")
+        cur.execute(f"ALTER SEQUENCE {schema}.cyc_seq OWNED BY t.id")
+        cur.execute(f"SELECT setval('{schema}.cyc_seq', 1700000000)")
+
+    issues = [i for i in ColumnValueAtRisk().run(ctx) if i.object_name.startswith(schema)]
+    assert issues == []
+
+
+def test_clean_for_bigint_at_realistic_usage(ctx, conn, schema):
+    """A bigserial at 1M last_value is at 0% of bigint max — never flagged."""
+    with conn.cursor() as cur:
+        cur.execute("CREATE TABLE t (id bigserial PRIMARY KEY)")
+        cur.execute(f"SELECT setval('{schema}.t_id_seq', 1000000)")  # 1M, ~0% of 2^63-1
+
+    issues = [i for i in ColumnValueAtRisk().run(ctx) if i.object_name.startswith(schema)]
+    assert issues == []
