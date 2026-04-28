@@ -4,6 +4,7 @@ Each rule has a dedicated page covering what it catches, why it matters, how to 
 
 | Rule | Severity | Catches |
 | --- | --- | --- |
+| [`column_value_at_risk`](column_value_at_risk.md) | warning | Sequence-backed columns whose sequence is past 70% of its type's max. |
 | [`fk_type_mismatch`](fk_type_mismatch.md) | error | FK column type differs from the referenced column type. |
 | [`missing_fk_index`](missing_fk_index.md) | warning | Foreign-key columns not covered by a leading index — slow cascades and joins. |
 | [`missing_primary_key`](missing_primary_key.md) | warning | Ordinary tables without a primary key. |

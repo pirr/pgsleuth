@@ -79,7 +79,6 @@ Get from 8 to ~30 rules so the tool is taken seriously next to schemacrawler. Hi
 - **`missing_replica_identity`** — tables with no `REPLICA IDENTITY` (extends `missing_primary_key` to cover tables with explicit replica identity but no PK).
 - **`fk_without_on_delete`** — foreign keys without an explicit `ON DELETE` policy (forcing the team to think about cascade vs restrict vs set null).
 - **`partition_without_pk`** — partitioned tables where the partition key isn't part of the PK.
-- **`pk_value_at_risk`** — `integer` PK whose actual `MAX(id)` is already past 50% / 80% of the type's range. Companion to `primary_key_type`.
 - **`default_now_text`** — `default 'now()'` (string literal!) instead of `default now()`.
 
 ## Longer-term — research
