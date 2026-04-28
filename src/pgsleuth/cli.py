@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 import sys
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Iterable
 
 import click
+import psycopg
 from rich.console import Console
 
 import pgsleuth.checkers  # noqa: F401  -- registers built-in checkers
@@ -19,6 +21,7 @@ from pgsleuth.db.connection import (
     SUPPORTED_VERSION_NAMES,
     connect,
     server_version_num,
+    statement_timeout,
 )
 from pgsleuth.reporters import json as json_reporter
 from pgsleuth.reporters import text as text_reporter
@@ -75,6 +78,23 @@ def list_checkers() -> None:
     "config_path",
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
 )
+@click.option(
+    "--statement-timeout",
+    "statement_timeout_seconds",
+    type=float,
+    default=None,
+    help=(
+        "Per-checker SQL timeout in seconds. Overrides the project default (5s) "
+        "and any TOML setting. Per-checker overrides go in pgsleuth.toml."
+    ),
+)
+@click.option(
+    "--no-statement-timeout",
+    "no_statement_timeout",
+    is_flag=True,
+    default=False,
+    help="Disable the per-checker statement timeout entirely.",
+)
 def check(
     dsn: str,
     checker_filter: str | None,
@@ -83,8 +103,15 @@ def check(
     output_format: str,
     min_severity: str,
     config_path: Path | None,
+    statement_timeout_seconds: float | None,
+    no_statement_timeout: bool,
 ) -> None:
     """Run consistency checks against a database."""
+    if statement_timeout_seconds is not None and no_statement_timeout:
+        raise click.UsageError(
+            "--statement-timeout and --no-statement-timeout are mutually exclusive."
+        )
+
     config = Config.from_file(config_path) if config_path else Config()
 
     if exclude_schemas:
@@ -98,6 +125,10 @@ def check(
         for name in config.enabled_checkers:
             if name not in registry.names():
                 raise click.UsageError(f"unknown checker: {name!r}")
+    if no_statement_timeout:
+        config.statement_timeout_ms = None
+    elif statement_timeout_seconds is not None:
+        config.statement_timeout_ms = int(statement_timeout_seconds * 1000)
 
     threshold = Severity(min_severity).rank
 
@@ -137,7 +168,22 @@ def _run_all(ctx: CheckerContext, threshold: int) -> Iterable[Issue]:
                 err=True,
             )
             continue
-        for issue in cls().run(ctx):
+
+        timeout_ms = ctx.config.statement_timeout_for(cls.name)
+        cm = statement_timeout(ctx.conn, timeout_ms) if timeout_ms is not None else nullcontext()
+        # Materialize per-checker so a QueryCanceled mid-yield discards partial
+        # findings rather than surfacing a half-result.
+        try:
+            with cm:
+                checker_issues = list(cls().run(ctx))
+        except psycopg.errors.QueryCanceled:
+            click.echo(
+                f"[skipped] {cls.name} — exceeded statement_timeout of {timeout_ms}ms",
+                err=True,
+            )
+            continue
+
+        for issue in checker_issues:
             if issue.severity.rank >= threshold:
                 yield issue
 
