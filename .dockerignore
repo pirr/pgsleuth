@@ -1,0 +1,9 @@
+# Aggressive: deny everything, then allow only the install inputs.
+**
+
+!pyproject.toml
+!src/
+
+# Re-deny inside src/ for things that shouldn't ship.
+src/**/__pycache__/
+**/*.pyc

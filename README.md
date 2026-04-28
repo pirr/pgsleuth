@@ -14,6 +14,27 @@ cd pgsleuth
 pip install -e '.[dev]'
 ```
 
+Or with Docker (no Python on the host required):
+
+```bash
+docker build -t pgsleuth .
+docker run --rm pgsleuth check --dsn postgresql://user:pw@host/db
+```
+
+The image is built on `python:3.13-alpine`, runs as a non-root user, and is ~25 MB compressed.
+
+**Passing a config file:** files on your host aren't visible inside the container — mount the config as a volume and point `--config` at the in-container path:
+
+```bash
+docker run --rm \
+  -v "$PWD/pgsleuth.toml:/pgsleuth.toml:ro" \
+  pgsleuth check \
+  --dsn postgresql://user:pw@host/db \
+  --config /pgsleuth.toml
+```
+
+The same pattern works for `--baseline` once baseline mode lands, or any other path-typed flag.
+
 ## Usage
 
 ```bash
