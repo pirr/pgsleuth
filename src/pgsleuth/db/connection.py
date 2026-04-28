@@ -50,3 +50,26 @@ def rule_docs_url(name: str) -> str:
     inside each rule page as further reading.
     """
     return f"https://github.com/pirr/pgsleuth/blob/main/docs/rules/{name}.md"
+
+
+@contextmanager
+def statement_timeout(conn: psycopg.Connection, timeout_ms: int) -> Iterator[None]:
+    """SET statement_timeout for the duration of the block, then RESET.
+
+    Used to bound how long any single checker can spend waiting on Postgres.
+    On timeout, the next query the block issues raises
+    ``psycopg.errors.QueryCanceled`` — callers are responsible for catching it.
+
+    `RESET` returns the connection to the postgresql.conf default rather than
+    any prior session value, which is fine because pgsleuth processes are
+    short-lived and don't share connections.
+    """
+    # SET cannot be parameterized; the value is an int from typed config so
+    # there's no injection surface, but we cast defensively.
+    with conn.cursor() as cur:
+        cur.execute(f"SET statement_timeout = {int(timeout_ms)}")
+    try:
+        yield
+    finally:
+        with conn.cursor() as cur:
+            cur.execute("RESET statement_timeout")
