@@ -298,6 +298,57 @@ def baseline_write(
     )
 
 
+@baseline_group.command("show")
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=baseline_module.DEFAULT_BASELINE_PATH,
+    show_default=True,
+    help="Path to the baseline file to display.",
+)
+def baseline_show(baseline_path: Path) -> None:
+    """Display the contents of a baseline file in a human-readable form.
+
+    Read-only — does not connect to a database. Useful for auditing what
+    a team has accepted in their baseline before agreeing to a PR that
+    modifies it.
+    """
+    try:
+        baseline = baseline_module.load(baseline_path)
+    except baseline_module.BaselineError as exc:
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    console = Console()
+    console.print(f"[bold]Baseline:[/bold] {baseline_path}")
+    console.print(f"[dim]Generated:[/dim] {baseline.generated_at}")
+
+    n_entries = len(baseline.fingerprints)
+    n_checkers = len({e.checker for e in baseline.fingerprints})
+    if n_entries == 0:
+        console.print("[dim]Entries:[/dim] 0")
+        console.print()
+        console.print("[dim](empty)[/dim]")
+        return
+    console.print(
+        f"[dim]Entries:[/dim] {n_entries} "
+        f"({n_checkers} {'checker' if n_checkers == 1 else 'checkers'})"
+    )
+    console.print()
+
+    grouped: dict[str, list[baseline_module.BaselineEntry]] = {}
+    for entry in baseline.fingerprints:
+        grouped.setdefault(entry.checker, []).append(entry)
+
+    for checker_name in sorted(grouped):
+        entries = grouped[checker_name]
+        console.rule(f"[bold]{checker_name}[/bold] ({len(entries)})")
+        for entry in sorted(entries, key=lambda e: e.object):
+            console.print(f"  {entry.object}")
+        console.print()
+
+
 @baseline_group.command("prune")
 @_common_options
 @click.option(

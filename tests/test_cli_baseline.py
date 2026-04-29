@@ -399,6 +399,76 @@ def test_baseline_write_uses_pgsleuth_dsn_envvar() -> None:
         assert Path("pgsleuth.baseline.json").exists()
 
 
+# ---------- baseline show subcommand ----------
+
+
+def test_baseline_show_displays_grouped_by_checker() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        _write_baseline(
+            Path("pgsleuth.baseline.json"),
+            [
+                ("missing_fk_index", "public.orders(user_id)"),
+                ("missing_fk_index", "public.invoices(customer_id)"),
+                ("missing_primary_key", "public.events"),
+            ],
+        )
+        result = runner.invoke(main, ["baseline", "show"])
+
+    assert result.exit_code == 0, result.output
+    assert "Entries: 3" in result.output
+    assert "2 checkers" in result.output
+    # Both checkers appear in output
+    assert "missing_fk_index" in result.output
+    assert "missing_primary_key" in result.output
+    # Each object appears
+    assert "public.orders(user_id)" in result.output
+    assert "public.invoices(customer_id)" in result.output
+    assert "public.events" in result.output
+
+
+def test_baseline_show_empty_baseline() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        _write_baseline(Path("pgsleuth.baseline.json"), [])
+        result = runner.invoke(main, ["baseline", "show"])
+
+    assert result.exit_code == 0, result.output
+    assert "Entries: 0" in result.output
+    assert "(empty)" in result.output
+
+
+def test_baseline_show_explicit_path() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        path = Path("custom.json")
+        _write_baseline(path, [("missing_fk_index", "public.t")])
+        result = runner.invoke(main, ["baseline", "show", "--baseline", str(path)])
+
+    assert result.exit_code == 0, result.output
+    assert "custom.json" in result.output
+    assert "public.t" in result.output
+
+
+def test_baseline_show_missing_file_exits_2() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(main, ["baseline", "show", "--baseline", "missing.json"])
+
+    assert result.exit_code == 2
+    assert "does not exist" in result.output
+
+
+def test_baseline_show_corrupt_file_exits_2() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("pgsleuth.baseline.json").write_text("{ not valid json")
+        result = runner.invoke(main, ["baseline", "show"])
+
+    assert result.exit_code == 2
+    assert "not valid JSON" in result.output
+
+
 # ---------- baseline prune subcommand ----------
 
 
