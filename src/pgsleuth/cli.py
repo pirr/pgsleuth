@@ -133,17 +133,7 @@ def check(
     threshold = Severity(min_severity).rank
 
     try:
-        with connect(dsn) as conn:
-            version = server_version_num(conn)
-            if version < SUPPORTED_VERSION_MIN:
-                click.echo(
-                    f"pgsleuth: PostgreSQL {_pg_version_str(version)} is not supported. "
-                    f"Supported versions: {SUPPORTED_VERSION_NAMES}.",
-                    err=True,
-                )
-                sys.exit(2)
-            ctx = CheckerContext(conn=conn, config=config, server_version=version)
-            issues = list(_run_all(ctx, threshold))
+        issues = _collect_issues(dsn, config, threshold)
     except Exception as exc:  # noqa: BLE001
         click.echo(f"pgsleuth: {exc}", err=True)
         sys.exit(2)
@@ -154,6 +144,29 @@ def check(
         text_reporter.render(issues)
 
     sys.exit(1 if issues else 0)
+
+
+def _collect_issues(dsn: str, config: Config, threshold: int) -> list[Issue]:
+    """Connect, version-check, run enabled checkers, return filtered issues.
+
+    Shared by the `check` command and the upcoming `baseline write` /
+    `baseline prune` subcommands so the connect-and-run pipeline lives
+    in one place. On unsupported server version, prints a stderr message
+    and `sys.exit(2)` — propagates as `SystemExit`, which the caller's
+    `except Exception` does not catch (intentional). Other DB errors
+    propagate as ordinary exceptions for the caller to log.
+    """
+    with connect(dsn) as conn:
+        version = server_version_num(conn)
+        if version < SUPPORTED_VERSION_MIN:
+            click.echo(
+                f"pgsleuth: PostgreSQL {_pg_version_str(version)} is not supported. "
+                f"Supported versions: {SUPPORTED_VERSION_NAMES}.",
+                err=True,
+            )
+            sys.exit(2)
+        ctx = CheckerContext(conn=conn, config=config, server_version=version)
+        return list(_run_all(ctx, threshold))
 
 
 def _run_all(ctx: CheckerContext, threshold: int) -> Iterable[Issue]:
