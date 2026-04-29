@@ -43,26 +43,105 @@ def list_checkers() -> None:
         console.print(f"  {cls.description}")
 
 
+def _common_options(f):
+    """Click options shared by `check` and `baseline write`.
+
+    Applied in reverse source order: the bottom-most option is the
+    *outermost* decorator and so appears first in --help.
+    """
+    f = click.option(
+        "--no-statement-timeout",
+        "no_statement_timeout",
+        is_flag=True,
+        default=False,
+        help="Disable the per-checker statement timeout entirely.",
+    )(f)
+    f = click.option(
+        "--statement-timeout",
+        "statement_timeout_seconds",
+        type=float,
+        default=None,
+        help=(
+            "Per-checker SQL timeout in seconds. Overrides the project default (5s) "
+            "and any TOML setting. Per-checker overrides go in pgsleuth.toml."
+        ),
+    )(f)
+    f = click.option(
+        "--config",
+        "config_path",
+        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    )(f)
+    f = click.option(
+        "--exclude-table",
+        "exclude_tables",
+        multiple=True,
+        help="Regex pattern for tables to skip. Pass multiple times.",
+    )(f)
+    f = click.option(
+        "--exclude-schema",
+        "exclude_schemas",
+        multiple=True,
+        help=(
+            f"Schemas to skip. Pass multiple times. Default: {', '.join(DEFAULT_EXCLUDED_SCHEMAS)}."
+        ),
+    )(f)
+    f = click.option(
+        "--checkers",
+        "checker_filter",
+        default=None,
+        help="Comma-separated list of checker names to run (default: all).",
+    )(f)
+    f = click.option(
+        "--dsn",
+        required=True,
+        envvar="PGSLEUTH_DSN",
+        help="Postgres DSN.",
+    )(f)
+    return f
+
+
+def _build_config_from_options(
+    *,
+    config_path: Path | None,
+    exclude_schemas: tuple[str, ...],
+    exclude_tables: tuple[str, ...],
+    checker_filter: str | None,
+    statement_timeout_seconds: float | None,
+    no_statement_timeout: bool,
+) -> Config:
+    """Apply shared CLI options to a Config and return it.
+
+    Raises click.UsageError on conflicting flags or unknown checker names —
+    the caller's Click context translates that into a usage-error exit.
+    """
+    if statement_timeout_seconds is not None and no_statement_timeout:
+        raise click.UsageError(
+            "--statement-timeout and --no-statement-timeout are mutually exclusive."
+        )
+
+    config = Config.from_file(config_path) if config_path else Config()
+
+    if exclude_schemas:
+        config.excluded_schemas = tuple(exclude_schemas)
+    if exclude_tables:
+        config.excluded_table_patterns = tuple(re.compile(p) for p in exclude_tables)
+    if checker_filter:
+        config.enabled_checkers = frozenset(
+            s.strip() for s in checker_filter.split(",") if s.strip()
+        )
+        for name in config.enabled_checkers:
+            if name not in registry.names():
+                raise click.UsageError(f"unknown checker: {name!r}")
+    if no_statement_timeout:
+        config.statement_timeout_ms = None
+    elif statement_timeout_seconds is not None:
+        config.statement_timeout_ms = int(statement_timeout_seconds * 1000)
+
+    return config
+
+
 @main.command("check")
-@click.option("--dsn", required=True, envvar="PGSLEUTH_DSN", help="Postgres DSN.")
-@click.option(
-    "--checkers",
-    "checker_filter",
-    default=None,
-    help="Comma-separated list of checker names to run (default: all).",
-)
-@click.option(
-    "--exclude-schema",
-    "exclude_schemas",
-    multiple=True,
-    help=(f"Schemas to skip. Pass multiple times. Default: {', '.join(DEFAULT_EXCLUDED_SCHEMAS)}."),
-)
-@click.option(
-    "--exclude-table",
-    "exclude_tables",
-    multiple=True,
-    help="Regex pattern for tables to skip. Pass multiple times.",
-)
+@_common_options
 @click.option(
     "--format",
     "output_format",
@@ -73,28 +152,6 @@ def list_checkers() -> None:
     "--min-severity",
     type=click.Choice([s.value for s in Severity]),
     default="info",
-)
-@click.option(
-    "--config",
-    "config_path",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
-@click.option(
-    "--statement-timeout",
-    "statement_timeout_seconds",
-    type=float,
-    default=None,
-    help=(
-        "Per-checker SQL timeout in seconds. Overrides the project default (5s) "
-        "and any TOML setting. Per-checker overrides go in pgsleuth.toml."
-    ),
-)
-@click.option(
-    "--no-statement-timeout",
-    "no_statement_timeout",
-    is_flag=True,
-    default=False,
-    help="Disable the per-checker statement timeout entirely.",
 )
 @click.option(
     "--baseline",
@@ -127,30 +184,17 @@ def check(
     no_baseline: bool,
 ) -> None:
     """Run consistency checks against a database."""
-    if statement_timeout_seconds is not None and no_statement_timeout:
-        raise click.UsageError(
-            "--statement-timeout and --no-statement-timeout are mutually exclusive."
-        )
     if baseline_path is not None and no_baseline:
         raise click.UsageError("--baseline and --no-baseline are mutually exclusive.")
 
-    config = Config.from_file(config_path) if config_path else Config()
-
-    if exclude_schemas:
-        config.excluded_schemas = tuple(exclude_schemas)
-    if exclude_tables:
-        config.excluded_table_patterns = tuple(re.compile(p) for p in exclude_tables)
-    if checker_filter:
-        config.enabled_checkers = frozenset(
-            s.strip() for s in checker_filter.split(",") if s.strip()
-        )
-        for name in config.enabled_checkers:
-            if name not in registry.names():
-                raise click.UsageError(f"unknown checker: {name!r}")
-    if no_statement_timeout:
-        config.statement_timeout_ms = None
-    elif statement_timeout_seconds is not None:
-        config.statement_timeout_ms = int(statement_timeout_seconds * 1000)
+    config = _build_config_from_options(
+        config_path=config_path,
+        exclude_schemas=exclude_schemas,
+        exclude_tables=exclude_tables,
+        checker_filter=checker_filter,
+        statement_timeout_seconds=statement_timeout_seconds,
+        no_statement_timeout=no_statement_timeout,
+    )
 
     threshold = Severity(min_severity).rank
 
@@ -192,6 +236,66 @@ def check(
         text_reporter.render(issues, suppressed=suppressed_count)
 
     sys.exit(1 if issues else 0)
+
+
+@main.group("baseline")
+def baseline_group() -> None:
+    """Manage the pgsleuth baseline file."""
+
+
+@baseline_group.command("write")
+@_common_options
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=baseline_module.DEFAULT_BASELINE_PATH,
+    show_default=True,
+    help="Where to write the baseline file. Overwrites any existing file freely.",
+)
+def baseline_write(
+    dsn: str,
+    checker_filter: str | None,
+    exclude_schemas: tuple[str, ...],
+    exclude_tables: tuple[str, ...],
+    config_path: Path | None,
+    statement_timeout_seconds: float | None,
+    no_statement_timeout: bool,
+    output_path: Path,
+) -> None:
+    """Snapshot every current finding to a baseline file.
+
+    Runs every enabled checker at info+ severity (no `--min-severity`
+    filter — the baseline should cover everything you might later raise
+    a threshold for) and writes the resulting fingerprints to
+    `--output` (default: pgsleuth.baseline.json in cwd). Overwrites
+    any existing file freely; the team is in version control.
+    """
+    config = _build_config_from_options(
+        config_path=config_path,
+        exclude_schemas=exclude_schemas,
+        exclude_tables=exclude_tables,
+        checker_filter=checker_filter,
+        statement_timeout_seconds=statement_timeout_seconds,
+        no_statement_timeout=no_statement_timeout,
+    )
+
+    # Capture everything; threshold=info means "all severities count".
+    threshold = Severity.INFO.rank
+
+    try:
+        issues = _collect_issues(dsn, config, threshold)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    baseline = baseline_module.from_issues(issues)
+    baseline_module.dump(baseline, output_path)
+    click.echo(
+        f"Wrote {len(baseline.fingerprints)} findings to {output_path}",
+        err=True,
+    )
 
 
 def _resolve_baseline_path(explicit_path: Path | None, no_baseline: bool) -> Path | None:

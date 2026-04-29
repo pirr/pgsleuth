@@ -250,6 +250,158 @@ def test_check_baseline_warns_on_stale_entries() -> None:
     assert "pgsleuth baseline prune" in result.output
 
 
+# ---------- baseline write subcommand ----------
+
+
+def test_baseline_write_creates_file_with_default_path() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[
+                    _issue("missing_fk_index", "public.orders(user_id)"),
+                    _issue("missing_primary_key", "public.events"),
+                ],
+            ),
+        ):
+            result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 0, result.output
+        assert "Wrote 2 findings to pgsleuth.baseline.json" in result.output
+        assert Path("pgsleuth.baseline.json").exists()
+
+        payload = json.loads(Path("pgsleuth.baseline.json").read_text())
+        assert payload["version"] == BASELINE_VERSION
+        assert len(payload["fingerprints"]) == 2
+        objects = sorted(e["object"] for e in payload["fingerprints"])
+        assert objects == ["public.events", "public.orders(user_id)"]
+
+
+def test_baseline_write_to_custom_output_path() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.t")],
+            ),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "baseline",
+                    "write",
+                    "--dsn",
+                    "postgresql://x/y",
+                    "--output",
+                    "custom.json",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert Path("custom.json").exists()
+        assert not Path("pgsleuth.baseline.json").exists()
+
+
+def test_baseline_write_overwrites_existing_file() -> None:
+    """Plan: overwrite freely. Existing file is replaced without prompting."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        # Pre-existing baseline with one entry
+        _write_baseline(
+            Path("pgsleuth.baseline.json"),
+            [("missing_primary_key", "public.legacy")],
+        )
+
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.new")],
+            ),
+        ):
+            result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(Path("pgsleuth.baseline.json").read_text())
+        objects = [e["object"] for e in payload["fingerprints"]]
+        # Original entry is gone; new entry is present
+        assert "public.legacy" not in objects
+        assert "public.new" in objects
+
+
+def test_baseline_write_captures_all_severities() -> None:
+    """No --min-severity filter — info findings are included in the baseline."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        info_issue = Issue(
+            checker="redundant_index",
+            severity=Severity.INFO,
+            object_type="index",
+            object_name="public.idx_a",
+            message="redundant",
+        )
+        warning_issue = _issue("missing_fk_index", "public.t")
+
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.cli._run_all", return_value=[info_issue, warning_issue]),
+        ):
+            result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(Path("pgsleuth.baseline.json").read_text())
+        objects = sorted(e["object"] for e in payload["fingerprints"])
+        assert objects == ["public.idx_a", "public.t"]
+
+
+def test_baseline_write_empty_when_no_findings() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.cli._run_all", return_value=[]),
+        ):
+            result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 0, result.output
+        assert "Wrote 0 findings" in result.output
+        payload = json.loads(Path("pgsleuth.baseline.json").read_text())
+        assert payload["fingerprints"] == []
+
+
+def test_baseline_write_uses_pgsleuth_dsn_envvar() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.t")],
+            ),
+        ):
+            result = runner.invoke(
+                main,
+                ["baseline", "write"],
+                env={"PGSLEUTH_DSN": "postgresql://envvar/db"},
+            )
+
+        assert result.exit_code == 0, result.output
+        assert Path("pgsleuth.baseline.json").exists()
+
+
+# ---------- check command, JSON output ----------
+
+
 def test_check_baseline_json_output_includes_suppressed() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
