@@ -228,6 +228,54 @@ def test_check_explicit_and_no_baseline_conflict() -> None:
     assert "--no-baseline" in result.output
 
 
+def test_check_baseline_no_stale_warning_for_checkers_filtered_out() -> None:
+    """Reproduces the bug from the field: --checkers narrows to a subset; baseline
+    has entries from other checkers; those entries must NOT count as stale.
+
+    Without the fix, a user who runs `baseline write` (all checkers) and then
+    `check --checkers X` (one checker) gets a misleading "N entries did not
+    reproduce" warning even when the schema is unchanged.
+    """
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        baseline = Path("pgsleuth.baseline.json")
+        _write_baseline(
+            baseline,
+            [
+                ("missing_fk_index", "public.orders(user_id)"),
+                ("missing_primary_key", "public.events"),
+                ("redundant_index", "public.orders.idx_a"),
+            ],
+        )
+        # Run only one checker. Mock _run_all to behave like that filter:
+        # it returns only findings from the enabled checker.
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.orders(user_id)")],
+            ),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "check",
+                    "--dsn",
+                    "postgresql://x/y",
+                    "--checkers",
+                    "missing_fk_index",
+                ],
+            )
+
+    assert result.exit_code == 0, result.output
+    # The one running-checker entry matched: suppressed.
+    assert "Suppressed 1 finding" in result.output
+    # The other two checkers' entries are NOT counted as stale, because
+    # we didn't run those checkers.
+    assert "did not reproduce" not in result.output
+
+
 def test_check_baseline_warns_on_stale_entries() -> None:
     """Baseline lists a fingerprint that doesn't reproduce in the run."""
     runner = CliRunner()
@@ -667,6 +715,52 @@ def test_baseline_prune_corrupt_baseline_exits_2() -> None:
 
         assert result.exit_code == 2
         assert "not valid JSON" in result.output
+
+
+def test_baseline_prune_does_not_drop_entries_for_unrun_checkers() -> None:
+    """Companion to the check-side fix: --checkers narrows what runs, but
+    entries for checkers that didn't run must NOT be pruned. We have no
+    information about whether they're stale.
+    """
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        path = Path("pgsleuth.baseline.json")
+        _write_baseline(
+            path,
+            [
+                ("missing_fk_index", "public.orders(user_id)"),  # ran, matches
+                ("missing_primary_key", "public.events"),  # not run; preserve
+                ("redundant_index", "public.orders.idx_a"),  # not run; preserve
+            ],
+        )
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.orders(user_id)")],
+            ),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "baseline",
+                    "prune",
+                    "--dsn",
+                    "postgresql://x/y",
+                    "--checkers",
+                    "missing_fk_index",
+                    "--ignore-unknown-checkers",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        # 0 stale removed: only checker that ran was missing_fk_index, and its
+        # entry matched. The other two entries are kept (we didn't run them).
+        assert "removed 0 stale entries" in result.output
+        payload = json.loads(path.read_text())
+        objects = sorted(e["object"] for e in payload["fingerprints"])
+        assert objects == ["public.events", "public.orders(user_id)", "public.orders.idx_a"]
 
 
 def test_baseline_prune_no_changes_when_all_match() -> None:

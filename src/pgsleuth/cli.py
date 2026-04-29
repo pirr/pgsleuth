@@ -100,6 +100,18 @@ def _common_options(f):
     return f
 
 
+def _running_checkers(config: Config) -> frozenset[str]:
+    """Names of checkers that this invocation will actually run.
+
+    Excludes checkers filtered out by --checkers, disabled in TOML, or
+    not-yet-imported. Does *not* exclude checkers that will be skipped
+    at runtime due to version gating or `statement_timeout` cancellation —
+    those are best-effort knowledge we'd need to track inside `_run_all`
+    to be precise, and the practical impact is small.
+    """
+    return frozenset(name for name in registry.names() if config.is_checker_enabled(name))
+
+
 def _build_config_from_options(
     *,
     config_path: Path | None,
@@ -221,7 +233,18 @@ def check(
         result = baseline_module.filter_issues(issues, baseline)
         issues = result.kept
         suppressed_count = result.suppressed_count
-        stale = baseline_module.stale_entries(baseline, result.matched_fps)
+
+        # An entry is only meaningfully "stale" if its checker was actually
+        # in scope this run. Entries whose checker was filtered out
+        # (--checkers, [pgsleuth.checkers.X].enabled=false, version-gated)
+        # can't be matched against findings that were never produced —
+        # warning about them would be misleading.
+        running = _running_checkers(config)
+        stale = [
+            e
+            for e in baseline_module.stale_entries(baseline, result.matched_fps)
+            if e.checker in running
+        ]
         if stale:
             click.echo(
                 f"pgsleuth: {len(stale)} baseline "
@@ -422,21 +445,27 @@ def baseline_prune(
         sys.exit(2)
 
     result = baseline_module.filter_issues(issues, baseline)
-    known = frozenset(registry.names())
-    unknowns = baseline_module.unknown_checker_entries(baseline, known)
+
+    # A checker is "known" for prune purposes only if it actually ran in
+    # this invocation. Treating registered-but-unrun checkers (--checkers
+    # filter, disabled in TOML, version-gated) as "known" would cause
+    # prune to drop their entries as stale — but we have no information
+    # about whether those findings still exist.
+    running = _running_checkers(config)
+    unknowns = baseline_module.unknown_checker_entries(baseline, running)
 
     if unknowns and not ignore_unknown_checkers:
         unknown_names = ", ".join(sorted({e.checker for e in unknowns}))
         click.echo(
             f"pgsleuth: {len(unknowns)} baseline "
             f"{'entry has' if len(unknowns) == 1 else 'entries have'} "
-            f"a checker not registered in this run: {unknown_names}. "
+            f"a checker not run in this invocation: {unknown_names}. "
             f"Preserved (warn-before-remove). "
             f"Pass --ignore-unknown-checkers to silence.",
             err=True,
         )
 
-    pruned = baseline_module.prune(baseline, result.matched_fps, known_checkers=known)
+    pruned = baseline_module.prune(baseline, result.matched_fps, known_checkers=running)
     pruned_set = set(pruned.fingerprints)
     removed = [e for e in baseline.fingerprints if e not in pruned_set]
 
