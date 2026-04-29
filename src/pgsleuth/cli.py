@@ -13,6 +13,7 @@ import psycopg
 from rich.console import Console
 
 import pgsleuth.checkers  # noqa: F401  -- registers built-in checkers
+from pgsleuth import baseline as baseline_module
 from pgsleuth.checkers.base import Issue, Severity, registry
 from pgsleuth.config import DEFAULT_EXCLUDED_SCHEMAS, Config
 from pgsleuth.context import CheckerContext
@@ -95,6 +96,23 @@ def list_checkers() -> None:
     default=False,
     help="Disable the per-checker statement timeout entirely.",
 )
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        f"Suppress findings listed in this baseline file. If omitted, "
+        f"./{baseline_module.DEFAULT_BASELINE_PATH} is auto-discovered when present."
+    ),
+)
+@click.option(
+    "--no-baseline",
+    "no_baseline",
+    is_flag=True,
+    default=False,
+    help="Disable baseline auto-discovery — report every finding.",
+)
 def check(
     dsn: str,
     checker_filter: str | None,
@@ -105,12 +123,16 @@ def check(
     config_path: Path | None,
     statement_timeout_seconds: float | None,
     no_statement_timeout: bool,
+    baseline_path: Path | None,
+    no_baseline: bool,
 ) -> None:
     """Run consistency checks against a database."""
     if statement_timeout_seconds is not None and no_statement_timeout:
         raise click.UsageError(
             "--statement-timeout and --no-statement-timeout are mutually exclusive."
         )
+    if baseline_path is not None and no_baseline:
+        raise click.UsageError("--baseline and --no-baseline are mutually exclusive.")
 
     config = Config.from_file(config_path) if config_path else Config()
 
@@ -132,18 +154,69 @@ def check(
 
     threshold = Severity(min_severity).rank
 
+    # Resolve and load the baseline (if any) BEFORE running checkers, so a
+    # corrupt or unreadable baseline fails fast without paying for a full DB
+    # scan first.
+    effective_baseline_path = _resolve_baseline_path(baseline_path, no_baseline)
+    baseline = None
+    if effective_baseline_path is not None:
+        try:
+            baseline = baseline_module.load(effective_baseline_path)
+        except baseline_module.BaselineError as exc:
+            click.echo(f"pgsleuth: {exc}", err=True)
+            sys.exit(2)
+
     try:
         issues = _collect_issues(dsn, config, threshold)
     except Exception as exc:  # noqa: BLE001
         click.echo(f"pgsleuth: {exc}", err=True)
         sys.exit(2)
 
+    suppressed_count = 0
+    if baseline is not None:
+        result = baseline_module.filter_issues(issues, baseline)
+        issues = result.kept
+        suppressed_count = result.suppressed_count
+        stale = baseline_module.stale_entries(baseline, result.matched_fps)
+        if stale:
+            click.echo(
+                f"pgsleuth: {len(stale)} baseline "
+                f"{'entry' if len(stale) == 1 else 'entries'} did not reproduce. "
+                f"Run 'pgsleuth baseline prune' to clean up.",
+                err=True,
+            )
+
     if output_format == "json":
-        json_reporter.render(issues)
+        json_reporter.render(issues, suppressed=suppressed_count)
     else:
-        text_reporter.render(issues)
+        text_reporter.render(issues, suppressed=suppressed_count)
 
     sys.exit(1 if issues else 0)
+
+
+def _resolve_baseline_path(explicit_path: Path | None, no_baseline: bool) -> Path | None:
+    """Pick the effective baseline file path.
+
+    Precedence:
+        --no-baseline       → None (skip even auto-discovery)
+        --baseline PATH     → PATH
+        ./pgsleuth.baseline.json exists → it (with a stderr notice so the
+                              user is never surprised that suppression
+                              happened on their behalf)
+        otherwise           → None (no baseline in effect)
+    """
+    if no_baseline:
+        return None
+    if explicit_path is not None:
+        return explicit_path
+    if baseline_module.DEFAULT_BASELINE_PATH.exists():
+        click.echo(
+            f"pgsleuth: using {baseline_module.DEFAULT_BASELINE_PATH} "
+            f"(auto-discovered; pass --no-baseline to skip)",
+            err=True,
+        )
+        return baseline_module.DEFAULT_BASELINE_PATH
+    return None
 
 
 def _collect_issues(dsn: str, config: Config, threshold: int) -> list[Issue]:
