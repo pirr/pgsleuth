@@ -28,7 +28,8 @@ def render(
 
     if not issues:
         if suppressed > 0:
-            console.print(f"[dim]Suppressed {suppressed} findings via baseline.[/dim]")
+            word = "finding" if suppressed == 1 else "findings"
+            console.print(f"[dim]Suppressed {suppressed} {word} via baseline.[/dim]")
         console.print("[green]No issues found.[/green]")
         return
 
@@ -49,7 +50,8 @@ def render(
             console.print()
 
     if suppressed > 0:
-        console.print(f"[dim]Suppressed {suppressed} findings via baseline.[/dim]")
+        word = "finding" if suppressed == 1 else "findings"
+        console.print(f"[dim]Suppressed {suppressed} {word} via baseline.[/dim]")
 
     counts = defaultdict(int)
     for issue in issues:

@@ -315,8 +315,9 @@ def baseline_write(
 
     baseline = baseline_module.from_issues(issues)
     baseline_module.dump(baseline, output_path)
+    n = len(baseline.fingerprints)
     click.echo(
-        f"Wrote {len(baseline.fingerprints)} findings to {output_path}",
+        f"Wrote {n} {'finding' if n == 1 else 'findings'} to {output_path}",
         err=True,
     )
 
