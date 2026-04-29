@@ -399,6 +399,233 @@ def test_baseline_write_uses_pgsleuth_dsn_envvar() -> None:
         assert Path("pgsleuth.baseline.json").exists()
 
 
+# ---------- baseline prune subcommand ----------
+
+
+def test_baseline_prune_removes_stale_entries() -> None:
+    """Baseline has 2 entries; only one reproduces — the other is removed."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        _write_baseline(
+            Path("pgsleuth.baseline.json"),
+            [
+                ("missing_fk_index", "public.still_here"),
+                ("missing_fk_index", "public.fixed_long_ago"),
+            ],
+        )
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.still_here")],
+            ),
+        ):
+            result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 0, result.output
+        assert "removed 1 stale entry" in result.output
+        assert "public.fixed_long_ago" in result.output
+
+        payload = json.loads(Path("pgsleuth.baseline.json").read_text())
+        objects = sorted(e["object"] for e in payload["fingerprints"])
+        assert objects == ["public.still_here"]
+
+
+def test_baseline_prune_keeps_unknown_checker_entries_with_warning() -> None:
+    """Entries for unregistered checkers are preserved + a warning is printed."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        _write_baseline(
+            Path("pgsleuth.baseline.json"),
+            [
+                ("missing_fk_index", "public.match"),
+                ("removed_checker_v1", "public.unknown_obj"),
+            ],
+        )
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.match")],
+            ),
+        ):
+            result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 0, result.output
+        assert "removed_checker_v1" in result.output  # warning names the checker
+        assert "warn-before-remove" in result.output
+
+        payload = json.loads(Path("pgsleuth.baseline.json").read_text())
+        objects = sorted(e["object"] for e in payload["fingerprints"])
+        # Both kept: matched + unknown-checker
+        assert objects == ["public.match", "public.unknown_obj"]
+
+
+def test_baseline_prune_ignore_unknown_checkers_silences_warning() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        _write_baseline(
+            Path("pgsleuth.baseline.json"),
+            [("removed_checker_v1", "public.unknown_obj")],
+        )
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.cli._run_all", return_value=[]),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "baseline",
+                    "prune",
+                    "--dsn",
+                    "postgresql://x/y",
+                    "--ignore-unknown-checkers",
+                ],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "removed_checker_v1" not in result.output
+        assert "warn-before-remove" not in result.output
+
+        # entry is still preserved despite the warning being silenced
+        payload = json.loads(Path("pgsleuth.baseline.json").read_text())
+        assert any(e["object"] == "public.unknown_obj" for e in payload["fingerprints"])
+
+
+def test_baseline_prune_dry_run_does_not_write() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        path = Path("pgsleuth.baseline.json")
+        _write_baseline(
+            path,
+            [
+                ("missing_fk_index", "public.match"),
+                ("missing_fk_index", "public.stale"),
+            ],
+        )
+        before = path.read_text()
+        before_mtime = path.stat().st_mtime_ns
+
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.match")],
+            ),
+        ):
+            result = runner.invoke(
+                main,
+                ["baseline", "prune", "--dsn", "postgresql://x/y", "--dry-run"],
+            )
+
+        assert result.exit_code == 0, result.output
+        assert "dry run" in result.output
+        assert "would remove 1 stale entry" in result.output
+        assert "public.stale" in result.output
+
+        # File untouched
+        assert path.read_text() == before
+        assert path.stat().st_mtime_ns == before_mtime
+
+
+def test_baseline_prune_uses_explicit_baseline_path() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        custom = Path("custom.json")
+        _write_baseline(
+            custom,
+            [
+                ("missing_fk_index", "public.match"),
+                ("missing_fk_index", "public.stale"),
+            ],
+        )
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[_issue("missing_fk_index", "public.match")],
+            ),
+        ):
+            result = runner.invoke(
+                main,
+                ["baseline", "prune", "--dsn", "postgresql://x/y", "--baseline", str(custom)],
+            )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(custom.read_text())
+        assert [e["object"] for e in payload["fingerprints"]] == ["public.match"]
+
+
+def test_baseline_prune_missing_baseline_file_exits_2() -> None:
+    """Click validates exists=True on --baseline; missing file → usage error."""
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+        ):
+            result = runner.invoke(
+                main,
+                [
+                    "baseline",
+                    "prune",
+                    "--dsn",
+                    "postgresql://x/y",
+                    "--baseline",
+                    "missing.json",
+                ],
+            )
+
+        assert result.exit_code == 2
+        assert "does not exist" in result.output
+
+
+def test_baseline_prune_corrupt_baseline_exits_2() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        Path("pgsleuth.baseline.json").write_text("{ not valid json")
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+        ):
+            result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 2
+        assert "not valid JSON" in result.output
+
+
+def test_baseline_prune_no_changes_when_all_match() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        _write_baseline(
+            Path("pgsleuth.baseline.json"),
+            [
+                ("missing_fk_index", "public.a"),
+                ("missing_fk_index", "public.b"),
+            ],
+        )
+        with (
+            patch("pgsleuth.cli.connect", _fake_connect),
+            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch(
+                "pgsleuth.cli._run_all",
+                return_value=[
+                    _issue("missing_fk_index", "public.a"),
+                    _issue("missing_fk_index", "public.b"),
+                ],
+            ),
+        ):
+            result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
+
+        assert result.exit_code == 0, result.output
+        assert "removed 0 stale entries" in result.output
+
+
 # ---------- check command, JSON output ----------
 
 

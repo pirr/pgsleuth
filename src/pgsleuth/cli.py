@@ -298,6 +298,117 @@ def baseline_write(
     )
 
 
+@baseline_group.command("prune")
+@_common_options
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=baseline_module.DEFAULT_BASELINE_PATH,
+    show_default=True,
+    help="Path to the baseline file to prune.",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Show what would change but don't write the file.",
+)
+@click.option(
+    "--ignore-unknown-checkers",
+    "ignore_unknown_checkers",
+    is_flag=True,
+    default=False,
+    help=(
+        "Suppress the warning about baseline entries whose checker is no longer "
+        "registered. Those entries are preserved either way (warn-before-remove)."
+    ),
+)
+def baseline_prune(
+    dsn: str,
+    checker_filter: str | None,
+    exclude_schemas: tuple[str, ...],
+    exclude_tables: tuple[str, ...],
+    config_path: Path | None,
+    statement_timeout_seconds: float | None,
+    no_statement_timeout: bool,
+    baseline_path: Path,
+    dry_run: bool,
+    ignore_unknown_checkers: bool,
+) -> None:
+    """Remove baseline entries that no longer reproduce.
+
+    Loads the baseline, runs every enabled checker at info+ severity (a
+    user's --min-severity is intentionally ignored here so we don't drop
+    entries the current run merely wouldn't surface), and rewrites the
+    file with stale entries removed. Entries whose checker is no longer
+    registered (e.g. removed in a pgsleuth upgrade) are kept and warned
+    about — pass --ignore-unknown-checkers to silence.
+    """
+    config = _build_config_from_options(
+        config_path=config_path,
+        exclude_schemas=exclude_schemas,
+        exclude_tables=exclude_tables,
+        checker_filter=checker_filter,
+        statement_timeout_seconds=statement_timeout_seconds,
+        no_statement_timeout=no_statement_timeout,
+    )
+
+    try:
+        baseline = baseline_module.load(baseline_path)
+    except baseline_module.BaselineError as exc:
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    # Capture every finding regardless of user's --min-severity, so we don't
+    # mistake "did not surface in this run" for "no longer present."
+    threshold = Severity.INFO.rank
+    try:
+        issues = _collect_issues(dsn, config, threshold)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    result = baseline_module.filter_issues(issues, baseline)
+    known = frozenset(registry.names())
+    unknowns = baseline_module.unknown_checker_entries(baseline, known)
+
+    if unknowns and not ignore_unknown_checkers:
+        unknown_names = ", ".join(sorted({e.checker for e in unknowns}))
+        click.echo(
+            f"pgsleuth: {len(unknowns)} baseline "
+            f"{'entry has' if len(unknowns) == 1 else 'entries have'} "
+            f"a checker not registered in this run: {unknown_names}. "
+            f"Preserved (warn-before-remove). "
+            f"Pass --ignore-unknown-checkers to silence.",
+            err=True,
+        )
+
+    pruned = baseline_module.prune(baseline, result.matched_fps, known_checkers=known)
+    pruned_set = set(pruned.fingerprints)
+    removed = [e for e in baseline.fingerprints if e not in pruned_set]
+
+    word = "entry" if len(removed) == 1 else "entries"
+    if dry_run:
+        click.echo(
+            f"pgsleuth: dry run — would remove {len(removed)} stale {word}. "
+            f"Re-run without --dry-run to apply.",
+            err=True,
+        )
+    else:
+        baseline_module.dump(pruned, baseline_path)
+        click.echo(
+            f"pgsleuth: removed {len(removed)} stale {word}; "
+            f"baseline now has {len(pruned.fingerprints)} "
+            f"{'entry' if len(pruned.fingerprints) == 1 else 'entries'}.",
+            err=True,
+        )
+
+    for entry in removed:
+        click.echo(f"  - {entry.checker}: {entry.object}", err=True)
+
+
 def _resolve_baseline_path(explicit_path: Path | None, no_baseline: bool) -> Path | None:
     """Pick the effective baseline file path.
 
