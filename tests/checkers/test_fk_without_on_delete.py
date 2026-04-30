@@ -127,9 +127,7 @@ def test_suggestion_qualifies_cross_schema_parent(ctx, conn, schema):
             )
 
             issues = [
-                i
-                for i in ForeignKeyWithoutOnDelete().run(ctx)
-                if i.object_name.startswith(schema)
+                i for i in ForeignKeyWithoutOnDelete().run(ctx) if i.object_name.startswith(schema)
             ]
             assert len(issues) == 1
             assert f"REFERENCES {other}.parent(id)" in issues[0].suggestion
