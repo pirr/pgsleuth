@@ -33,7 +33,7 @@ docker run --rm \
   --config /pgsleuth.toml
 ```
 
-The same pattern works for `--baseline` once baseline mode lands, or any other path-typed flag.
+The same pattern works for `--baseline` or any other path-typed flag.
 
 ## Usage
 
@@ -82,6 +82,60 @@ Every rule has a dedicated page covering rationale, examples, fix SQL, and "when
 
 Severity is intentional, not arbitrary — see [`docs/severity.md`](docs/severity.md) for the full philosophy, the per-rule rationale, and `--min-severity` guidance for CI.
 
+## Baseline mode
+
+For brownfield databases with hundreds of pre-existing findings, baseline mode lets you adopt pgsleuth in CI **without fixing all of them first**. Snapshot the current findings to a JSON file, commit it; from then on CI fails only on **new** findings.
+
+```bash
+# Day 1 — one-time setup
+pgsleuth baseline write --dsn $DSN
+git add pgsleuth.baseline.json
+git commit -m "baseline: snapshot of accepted schema findings"
+
+# Every CI run (auto-discovers ./pgsleuth.baseline.json)
+pgsleuth check --dsn $DSN
+# pgsleuth: using pgsleuth.baseline.json (auto-discovered; pass --no-baseline to skip)
+# Suppressed 116 findings via baseline.
+# No issues found.
+# exit 0
+```
+
+When a migration introduces a new finding, CI fails on **just that one finding**:
+
+```text
+[WARNING]  public.audit_log(user_id)
+  Foreign key 'audit_log_user_id_fkey' has no covering index.
+  suggestion: CREATE INDEX ON public.audit_log (user_id);
+
+Suppressed 116 findings via baseline.
+Summary: 1 warning
+exit 1
+```
+
+The author either fixes it (preferred) or runs `pgsleuth baseline write` again to accept it — visible in the PR diff for review.
+
+### Other baseline commands
+
+```bash
+pgsleuth baseline show              # human-readable view of the file (no DB)
+pgsleuth baseline prune --dsn $DSN  # remove entries that no longer reproduce
+pgsleuth baseline prune --dry-run --dsn $DSN   # preview what prune would remove
+```
+
+Run `prune` periodically (every few months, or before reviewing the baseline). Without it, fixed-but-still-baselined entries silently mask regressions.
+
+### Flags on the `check` command
+
+| Flag | Effect |
+| --- | --- |
+| (none) | Auto-discovers `./pgsleuth.baseline.json` if present. Prints a one-line stderr notice when it does. |
+| `--baseline PATH` | Use the baseline at `PATH` (overrides auto-discovery). |
+| `--no-baseline` | Disable auto-discovery for this run; report every finding. Useful for periodic full audits. |
+
+### How "same finding" is recognized
+
+Each finding gets a stable fingerprint of `(checker, object_name)` — `sha256("pgsleuth/baseline/v1\0checker\0object_name")`. The fingerprint **excludes the human-readable message**, so rephrasing the message in a future pgsleuth release doesn't break committed baselines. The file is sorted deterministically by `(checker, object)` for clean diffs in code review.
+
 ## Configuration
 
 Pass a TOML config file with `--config`:
@@ -112,6 +166,8 @@ pgsleuth check --dsn $DSN \
 
 ```yaml
 - run: pgsleuth check --dsn $DATABASE_URL --min-severity warning
+  # If pgsleuth.baseline.json is in the repo root, it's auto-discovered
+  # and CI fails only on new findings beyond it. See "Baseline mode" above.
 ```
 
 Use `--format json` if you want to pipe results into a reporter.

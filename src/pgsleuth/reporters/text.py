@@ -17,11 +17,19 @@ _COLOR = {
 }
 
 
-def render(issues: Iterable[Issue], console: Console | None = None) -> None:
+def render(
+    issues: Iterable[Issue],
+    *,
+    console: Console | None = None,
+    suppressed: int = 0,
+) -> None:
     console = console or Console()
     issues = list(issues)
 
     if not issues:
+        if suppressed > 0:
+            word = "finding" if suppressed == 1 else "findings"
+            console.print(f"[dim]Suppressed {suppressed} {word} via baseline.[/dim]")
         console.print("[green]No issues found.[/green]")
         return
 
@@ -40,6 +48,10 @@ def render(issues: Iterable[Issue], console: Console | None = None) -> None:
             if issue.docs_url:
                 console.print(f"  [dim]docs:[/dim] {issue.docs_url}")
             console.print()
+
+    if suppressed > 0:
+        word = "finding" if suppressed == 1 else "findings"
+        console.print(f"[dim]Suppressed {suppressed} {word} via baseline.[/dim]")
 
     counts = defaultdict(int)
     for issue in issues:

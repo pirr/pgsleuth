@@ -13,6 +13,7 @@ import psycopg
 from rich.console import Console
 
 import pgsleuth.checkers  # noqa: F401  -- registers built-in checkers
+from pgsleuth import baseline as baseline_module
 from pgsleuth.checkers.base import Issue, Severity, registry
 from pgsleuth.config import DEFAULT_EXCLUDED_SCHEMAS, Config
 from pgsleuth.context import CheckerContext
@@ -42,71 +43,89 @@ def list_checkers() -> None:
         console.print(f"  {cls.description}")
 
 
-@main.command("check")
-@click.option("--dsn", required=True, envvar="PGSLEUTH_DSN", help="Postgres DSN.")
-@click.option(
-    "--checkers",
-    "checker_filter",
-    default=None,
-    help="Comma-separated list of checker names to run (default: all).",
-)
-@click.option(
-    "--exclude-schema",
-    "exclude_schemas",
-    multiple=True,
-    help=(f"Schemas to skip. Pass multiple times. Default: {', '.join(DEFAULT_EXCLUDED_SCHEMAS)}."),
-)
-@click.option(
-    "--exclude-table",
-    "exclude_tables",
-    multiple=True,
-    help="Regex pattern for tables to skip. Pass multiple times.",
-)
-@click.option(
-    "--format",
-    "output_format",
-    type=click.Choice(["text", "json"]),
-    default="text",
-)
-@click.option(
-    "--min-severity",
-    type=click.Choice([s.value for s in Severity]),
-    default="info",
-)
-@click.option(
-    "--config",
-    "config_path",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-)
-@click.option(
-    "--statement-timeout",
-    "statement_timeout_seconds",
-    type=float,
-    default=None,
-    help=(
-        "Per-checker SQL timeout in seconds. Overrides the project default (5s) "
-        "and any TOML setting. Per-checker overrides go in pgsleuth.toml."
-    ),
-)
-@click.option(
-    "--no-statement-timeout",
-    "no_statement_timeout",
-    is_flag=True,
-    default=False,
-    help="Disable the per-checker statement timeout entirely.",
-)
-def check(
-    dsn: str,
-    checker_filter: str | None,
+def _common_options(f):
+    """Click options shared by `check` and `baseline write`.
+
+    Applied in reverse source order: the bottom-most option is the
+    *outermost* decorator and so appears first in --help.
+    """
+    f = click.option(
+        "--no-statement-timeout",
+        "no_statement_timeout",
+        is_flag=True,
+        default=False,
+        help="Disable the per-checker statement timeout entirely.",
+    )(f)
+    f = click.option(
+        "--statement-timeout",
+        "statement_timeout_seconds",
+        type=float,
+        default=None,
+        help=(
+            "Per-checker SQL timeout in seconds. Overrides the project default (5s) "
+            "and any TOML setting. Per-checker overrides go in pgsleuth.toml."
+        ),
+    )(f)
+    f = click.option(
+        "--config",
+        "config_path",
+        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    )(f)
+    f = click.option(
+        "--exclude-table",
+        "exclude_tables",
+        multiple=True,
+        help="Regex pattern for tables to skip. Pass multiple times.",
+    )(f)
+    f = click.option(
+        "--exclude-schema",
+        "exclude_schemas",
+        multiple=True,
+        help=(
+            f"Schemas to skip. Pass multiple times. Default: {', '.join(DEFAULT_EXCLUDED_SCHEMAS)}."
+        ),
+    )(f)
+    f = click.option(
+        "--checkers",
+        "checker_filter",
+        default=None,
+        help="Comma-separated list of checker names to run (default: all).",
+    )(f)
+    f = click.option(
+        "--dsn",
+        required=True,
+        envvar="PGSLEUTH_DSN",
+        help="Postgres DSN.",
+    )(f)
+    return f
+
+
+def _running_checkers(config: Config) -> frozenset[str]:
+    """Names of checkers that this invocation will actually run.
+
+    Excludes checkers filtered out by --checkers, disabled in TOML, or
+    not-yet-imported. Does *not* exclude checkers that will be skipped
+    at runtime due to version gating or `statement_timeout` cancellation —
+    those are best-effort knowledge we'd need to track inside `_run_all`
+    to be precise, and the practical impact is small.
+    """
+    return frozenset(name for name in registry.names() if config.is_checker_enabled(name))
+
+
+def _build_config_from_options(
+    *,
+    config_path: Path | None,
     exclude_schemas: tuple[str, ...],
     exclude_tables: tuple[str, ...],
-    output_format: str,
-    min_severity: str,
-    config_path: Path | None,
+    checker_filter: str | None,
     statement_timeout_seconds: float | None,
     no_statement_timeout: bool,
-) -> None:
-    """Run consistency checks against a database."""
+) -> Config:
+    """Apply shared CLI options to a Config and return it.
+
+    Raises click.UsageError on conflicting flags or unknown checker names —
+    the caller's Click context translates that into a usage-error exit.
+    """
     if statement_timeout_seconds is not None and no_statement_timeout:
         raise click.UsageError(
             "--statement-timeout and --no-statement-timeout are mutually exclusive."
@@ -130,30 +149,393 @@ def check(
     elif statement_timeout_seconds is not None:
         config.statement_timeout_ms = int(statement_timeout_seconds * 1000)
 
+    return config
+
+
+@main.command("check")
+@_common_options
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+)
+@click.option(
+    "--min-severity",
+    type=click.Choice([s.value for s in Severity]),
+    default="info",
+)
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help=(
+        f"Suppress findings listed in this baseline file. If omitted, "
+        f"./{baseline_module.DEFAULT_BASELINE_PATH} is auto-discovered when present."
+    ),
+)
+@click.option(
+    "--no-baseline",
+    "no_baseline",
+    is_flag=True,
+    default=False,
+    help="Disable baseline auto-discovery — report every finding.",
+)
+def check(
+    dsn: str,
+    checker_filter: str | None,
+    exclude_schemas: tuple[str, ...],
+    exclude_tables: tuple[str, ...],
+    output_format: str,
+    min_severity: str,
+    config_path: Path | None,
+    statement_timeout_seconds: float | None,
+    no_statement_timeout: bool,
+    baseline_path: Path | None,
+    no_baseline: bool,
+) -> None:
+    """Run consistency checks against a database."""
+    if baseline_path is not None and no_baseline:
+        raise click.UsageError("--baseline and --no-baseline are mutually exclusive.")
+
+    config = _build_config_from_options(
+        config_path=config_path,
+        exclude_schemas=exclude_schemas,
+        exclude_tables=exclude_tables,
+        checker_filter=checker_filter,
+        statement_timeout_seconds=statement_timeout_seconds,
+        no_statement_timeout=no_statement_timeout,
+    )
+
     threshold = Severity(min_severity).rank
 
+    # Resolve and load the baseline (if any) BEFORE running checkers, so a
+    # corrupt or unreadable baseline fails fast without paying for a full DB
+    # scan first.
+    effective_baseline_path = _resolve_baseline_path(baseline_path, no_baseline)
+    baseline = None
+    if effective_baseline_path is not None:
+        try:
+            baseline = baseline_module.load(effective_baseline_path)
+        except baseline_module.BaselineError as exc:
+            click.echo(f"pgsleuth: {exc}", err=True)
+            sys.exit(2)
+
     try:
-        with connect(dsn) as conn:
-            version = server_version_num(conn)
-            if version < SUPPORTED_VERSION_MIN:
-                click.echo(
-                    f"pgsleuth: PostgreSQL {_pg_version_str(version)} is not supported. "
-                    f"Supported versions: {SUPPORTED_VERSION_NAMES}.",
-                    err=True,
-                )
-                sys.exit(2)
-            ctx = CheckerContext(conn=conn, config=config, server_version=version)
-            issues = list(_run_all(ctx, threshold))
+        issues = _collect_issues(dsn, config, threshold)
     except Exception as exc:  # noqa: BLE001
         click.echo(f"pgsleuth: {exc}", err=True)
         sys.exit(2)
 
+    suppressed_count = 0
+    if baseline is not None:
+        result = baseline_module.filter_issues(issues, baseline)
+        issues = result.kept
+        suppressed_count = result.suppressed_count
+
+        # An entry is only meaningfully "stale" if its checker was actually
+        # in scope this run. Entries whose checker was filtered out
+        # (--checkers, [pgsleuth.checkers.X].enabled=false, version-gated)
+        # can't be matched against findings that were never produced —
+        # warning about them would be misleading.
+        running = _running_checkers(config)
+        stale = [
+            e
+            for e in baseline_module.stale_entries(baseline, result.matched_fps)
+            if e.checker in running
+        ]
+        if stale:
+            click.echo(
+                f"pgsleuth: {len(stale)} baseline "
+                f"{'entry' if len(stale) == 1 else 'entries'} did not reproduce. "
+                f"Run 'pgsleuth baseline prune' to clean up.",
+                err=True,
+            )
+
     if output_format == "json":
-        json_reporter.render(issues)
+        json_reporter.render(issues, suppressed=suppressed_count)
     else:
-        text_reporter.render(issues)
+        text_reporter.render(issues, suppressed=suppressed_count)
 
     sys.exit(1 if issues else 0)
+
+
+@main.group("baseline")
+def baseline_group() -> None:
+    """Manage the pgsleuth baseline file."""
+
+
+@baseline_group.command("write")
+@_common_options
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=baseline_module.DEFAULT_BASELINE_PATH,
+    show_default=True,
+    help="Where to write the baseline file. Overwrites any existing file freely.",
+)
+def baseline_write(
+    dsn: str,
+    checker_filter: str | None,
+    exclude_schemas: tuple[str, ...],
+    exclude_tables: tuple[str, ...],
+    config_path: Path | None,
+    statement_timeout_seconds: float | None,
+    no_statement_timeout: bool,
+    output_path: Path,
+) -> None:
+    """Snapshot every current finding to a baseline file.
+
+    Runs every enabled checker at info+ severity (no `--min-severity`
+    filter — the baseline should cover everything you might later raise
+    a threshold for) and writes the resulting fingerprints to
+    `--output` (default: pgsleuth.baseline.json in cwd). Overwrites
+    any existing file freely; the team is in version control.
+    """
+    config = _build_config_from_options(
+        config_path=config_path,
+        exclude_schemas=exclude_schemas,
+        exclude_tables=exclude_tables,
+        checker_filter=checker_filter,
+        statement_timeout_seconds=statement_timeout_seconds,
+        no_statement_timeout=no_statement_timeout,
+    )
+
+    # Capture everything; threshold=info means "all severities count".
+    threshold = Severity.INFO.rank
+
+    try:
+        issues = _collect_issues(dsn, config, threshold)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    baseline = baseline_module.from_issues(issues)
+    baseline_module.dump(baseline, output_path)
+    n = len(baseline.fingerprints)
+    click.echo(
+        f"Wrote {n} {'finding' if n == 1 else 'findings'} to {output_path}",
+        err=True,
+    )
+
+
+@baseline_group.command("show")
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=baseline_module.DEFAULT_BASELINE_PATH,
+    show_default=True,
+    help="Path to the baseline file to display.",
+)
+def baseline_show(baseline_path: Path) -> None:
+    """Display the contents of a baseline file in a human-readable form.
+
+    Read-only — does not connect to a database. Useful for auditing what
+    a team has accepted in their baseline before agreeing to a PR that
+    modifies it.
+    """
+    try:
+        baseline = baseline_module.load(baseline_path)
+    except baseline_module.BaselineError as exc:
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    console = Console()
+    console.print(f"[bold]Baseline:[/bold] {baseline_path}")
+    console.print(f"[dim]Generated:[/dim] {baseline.generated_at}")
+
+    n_entries = len(baseline.fingerprints)
+    n_checkers = len({e.checker for e in baseline.fingerprints})
+    if n_entries == 0:
+        console.print("[dim]Entries:[/dim] 0")
+        console.print()
+        console.print("[dim](empty)[/dim]")
+        return
+    console.print(
+        f"[dim]Entries:[/dim] {n_entries} "
+        f"({n_checkers} {'checker' if n_checkers == 1 else 'checkers'})"
+    )
+    console.print()
+
+    grouped: dict[str, list[baseline_module.BaselineEntry]] = {}
+    for entry in baseline.fingerprints:
+        grouped.setdefault(entry.checker, []).append(entry)
+
+    for checker_name in sorted(grouped):
+        entries = grouped[checker_name]
+        console.rule(f"[bold]{checker_name}[/bold] ({len(entries)})")
+        for entry in sorted(entries, key=lambda e: e.object):
+            console.print(f"  {entry.object}")
+        console.print()
+
+
+@baseline_group.command("prune")
+@_common_options
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=baseline_module.DEFAULT_BASELINE_PATH,
+    show_default=True,
+    help="Path to the baseline file to prune.",
+)
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Show what would change but don't write the file.",
+)
+@click.option(
+    "--ignore-unknown-checkers",
+    "ignore_unknown_checkers",
+    is_flag=True,
+    default=False,
+    help=(
+        "Suppress the warning about baseline entries whose checker is no longer "
+        "registered. Those entries are preserved either way (warn-before-remove)."
+    ),
+)
+def baseline_prune(
+    dsn: str,
+    checker_filter: str | None,
+    exclude_schemas: tuple[str, ...],
+    exclude_tables: tuple[str, ...],
+    config_path: Path | None,
+    statement_timeout_seconds: float | None,
+    no_statement_timeout: bool,
+    baseline_path: Path,
+    dry_run: bool,
+    ignore_unknown_checkers: bool,
+) -> None:
+    """Remove baseline entries that no longer reproduce.
+
+    Loads the baseline, runs every enabled checker at info+ severity (a
+    user's --min-severity is intentionally ignored here so we don't drop
+    entries the current run merely wouldn't surface), and rewrites the
+    file with stale entries removed. Entries whose checker is no longer
+    registered (e.g. removed in a pgsleuth upgrade) are kept and warned
+    about — pass --ignore-unknown-checkers to silence.
+    """
+    config = _build_config_from_options(
+        config_path=config_path,
+        exclude_schemas=exclude_schemas,
+        exclude_tables=exclude_tables,
+        checker_filter=checker_filter,
+        statement_timeout_seconds=statement_timeout_seconds,
+        no_statement_timeout=no_statement_timeout,
+    )
+
+    try:
+        baseline = baseline_module.load(baseline_path)
+    except baseline_module.BaselineError as exc:
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    # Capture every finding regardless of user's --min-severity, so we don't
+    # mistake "did not surface in this run" for "no longer present."
+    threshold = Severity.INFO.rank
+    try:
+        issues = _collect_issues(dsn, config, threshold)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+
+    result = baseline_module.filter_issues(issues, baseline)
+
+    # A checker is "known" for prune purposes only if it actually ran in
+    # this invocation. Treating registered-but-unrun checkers (--checkers
+    # filter, disabled in TOML, version-gated) as "known" would cause
+    # prune to drop their entries as stale — but we have no information
+    # about whether those findings still exist.
+    running = _running_checkers(config)
+    unknowns = baseline_module.unknown_checker_entries(baseline, running)
+
+    if unknowns and not ignore_unknown_checkers:
+        unknown_names = ", ".join(sorted({e.checker for e in unknowns}))
+        click.echo(
+            f"pgsleuth: {len(unknowns)} baseline "
+            f"{'entry has' if len(unknowns) == 1 else 'entries have'} "
+            f"a checker not run in this invocation: {unknown_names}. "
+            f"Preserved (warn-before-remove). "
+            f"Pass --ignore-unknown-checkers to silence.",
+            err=True,
+        )
+
+    pruned = baseline_module.prune(baseline, result.matched_fps, known_checkers=running)
+    pruned_set = set(pruned.fingerprints)
+    removed = [e for e in baseline.fingerprints if e not in pruned_set]
+
+    word = "entry" if len(removed) == 1 else "entries"
+    if dry_run:
+        click.echo(
+            f"pgsleuth: dry run — would remove {len(removed)} stale {word}. "
+            f"Re-run without --dry-run to apply.",
+            err=True,
+        )
+    else:
+        baseline_module.dump(pruned, baseline_path)
+        click.echo(
+            f"pgsleuth: removed {len(removed)} stale {word}; "
+            f"baseline now has {len(pruned.fingerprints)} "
+            f"{'entry' if len(pruned.fingerprints) == 1 else 'entries'}.",
+            err=True,
+        )
+
+    for entry in removed:
+        click.echo(f"  - {entry.checker}: {entry.object}", err=True)
+
+
+def _resolve_baseline_path(explicit_path: Path | None, no_baseline: bool) -> Path | None:
+    """Pick the effective baseline file path.
+
+    Precedence:
+        --no-baseline       → None (skip even auto-discovery)
+        --baseline PATH     → PATH
+        ./pgsleuth.baseline.json exists → it (with a stderr notice so the
+                              user is never surprised that suppression
+                              happened on their behalf)
+        otherwise           → None (no baseline in effect)
+    """
+    if no_baseline:
+        return None
+    if explicit_path is not None:
+        return explicit_path
+    if baseline_module.DEFAULT_BASELINE_PATH.exists():
+        click.echo(
+            f"pgsleuth: using {baseline_module.DEFAULT_BASELINE_PATH} "
+            f"(auto-discovered; pass --no-baseline to skip)",
+            err=True,
+        )
+        return baseline_module.DEFAULT_BASELINE_PATH
+    return None
+
+
+def _collect_issues(dsn: str, config: Config, threshold: int) -> list[Issue]:
+    """Connect, version-check, run enabled checkers, return filtered issues.
+
+    Shared by the `check` command and the upcoming `baseline write` /
+    `baseline prune` subcommands so the connect-and-run pipeline lives
+    in one place. On unsupported server version, prints a stderr message
+    and `sys.exit(2)` — propagates as `SystemExit`, which the caller's
+    `except Exception` does not catch (intentional). Other DB errors
+    propagate as ordinary exceptions for the caller to log.
+    """
+    with connect(dsn) as conn:
+        version = server_version_num(conn)
+        if version < SUPPORTED_VERSION_MIN:
+            click.echo(
+                f"pgsleuth: PostgreSQL {_pg_version_str(version)} is not supported. "
+                f"Supported versions: {SUPPORTED_VERSION_NAMES}.",
+                err=True,
+            )
+            sys.exit(2)
+        ctx = CheckerContext(conn=conn, config=config, server_version=version)
+        return list(_run_all(ctx, threshold))
 
 
 def _run_all(ctx: CheckerContext, threshold: int) -> Iterable[Issue]:
