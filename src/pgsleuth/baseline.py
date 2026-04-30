@@ -100,21 +100,23 @@ def from_issues(issues: Iterable[Issue], *, now: str | None = None) -> Baseline:
 
     `now` defaults to the current UTC time as ISO-8601 with seconds precision
     and a trailing 'Z'. Tests pass a fixed value for determinism.
+
+    Duplicate findings (same checker + object_name) are deduplicated to a
+    single entry — first occurrence wins. A checker that mistakenly reports
+    the same finding twice would otherwise pollute the baseline file and
+    inflate the "Suppressed N" count on subsequent runs.
     """
     timestamp = now if now is not None else _utc_iso_seconds()
-    entries = tuple(
-        sorted(
-            (
-                BaselineEntry(
-                    checker=issue.checker,
-                    object=issue.object_name,
-                    fp=fingerprint(issue),
-                )
-                for issue in issues
-            ),
-            key=lambda e: (e.checker, e.object),
-        )
-    )
+    by_fp: dict[str, BaselineEntry] = {}
+    for issue in issues:
+        fp = fingerprint(issue)
+        if fp not in by_fp:
+            by_fp[fp] = BaselineEntry(
+                checker=issue.checker,
+                object=issue.object_name,
+                fp=fp,
+            )
+    entries = tuple(sorted(by_fp.values(), key=lambda e: (e.checker, e.object)))
     return Baseline(
         version=BASELINE_VERSION,
         generated_at=timestamp,
@@ -179,6 +181,12 @@ def dump(baseline: Baseline, path: Path) -> None:
     Writes to `<path>.tmp` first then `os.replace` — so a failed write or
     crash leaves the existing file intact. Pretty JSON, sorted entries,
     deterministic output for clean diffs in code review.
+
+    If `path` already exists, its mode bits (e.g. an explicit
+    `chmod 600` for a sensitive baseline) are copied onto the new file
+    before the swap. Without this, `os.replace` would leave the new
+    file with default umask permissions and silently widen any
+    restriction the team had placed on the original.
     """
     payload = {
         "version": baseline.version,
@@ -192,6 +200,18 @@ def dump(baseline: Baseline, path: Path) -> None:
         json.dumps(payload, indent=2, sort_keys=False) + "\n",
         encoding="utf-8",
     )
+
+    # Preserve permissions of the file we're replacing, if any. Best-effort:
+    # if the existing file is gone or unreadable between exists() and stat(),
+    # we just leave the .tmp at default permissions — same outcome as if the
+    # file never existed.
+    try:
+        existing_mode = path.stat().st_mode & 0o777
+    except OSError:
+        existing_mode = None
+    if existing_mode is not None:
+        os.chmod(tmp, existing_mode)
+
     os.replace(tmp, path)
 
 

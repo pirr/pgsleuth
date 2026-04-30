@@ -58,6 +58,22 @@ def test_fingerprint_for_matches_fingerprint() -> None:
     assert fingerprint(issue) == fingerprint_for("missing_fk_index", "public.orders(user_id)")
 
 
+def test_from_issues_dedupes_duplicate_findings() -> None:
+    """Same (checker, object_name) reported twice → one baseline entry, not two.
+
+    A buggy checker SQL could yield the same finding twice. Without dedup
+    we'd write both entries; subsequent runs would show inflated "Suppressed
+    N" counts and confusing diffs in code review.
+    """
+    a = _issue("missing_fk_index", "public.orders(user_id)", message="first wording")
+    b = _issue("missing_fk_index", "public.orders(user_id)", message="second wording")
+
+    baseline = from_issues([a, b], now="2026-01-01T00:00:00Z")
+
+    assert len(baseline.fingerprints) == 1
+    assert baseline.fingerprints[0].object == "public.orders(user_id)"
+
+
 def test_from_issues_sorts_by_checker_then_object() -> None:
     issues = [
         _issue("redundant_index", "public.b"),
@@ -72,6 +88,25 @@ def test_from_issues_sorts_by_checker_then_object() -> None:
     ]
     assert baseline.version == BASELINE_VERSION
     assert baseline.generated_at == "2026-01-01T00:00:00Z"
+
+
+def test_unicode_object_names_round_trip(tmp_path: Path) -> None:
+    """Non-ASCII identifiers in object_name survive write→load and produce
+    stable fingerprints. Confidence test: Postgres allows UTF-8 identifiers,
+    so a real schema could have e.g. emoji or non-Latin script in a name.
+    """
+    issue = _issue("missing_fk_index", "public.users_📊(пользователь)")
+
+    baseline = from_issues([issue], now="2026-01-01T00:00:00Z")
+    path = tmp_path / "b.json"
+    dump(baseline, path)
+    loaded = load(path)
+
+    assert loaded.fingerprints[0].object == "public.users_📊(пользователь)"
+    # Fingerprint must match what fingerprint() would compute fresh from
+    # the same Issue — i.e. the file's `fp` field is recoverable, not
+    # corrupted by encoding round-trip.
+    assert loaded.fingerprints[0].fp == fingerprint(issue)
 
 
 def test_dump_then_load_roundtrip(tmp_path: Path) -> None:
@@ -112,6 +147,36 @@ def test_dump_is_atomic(tmp_path: Path) -> None:
     assert "original" not in parsed
     assert parsed["version"] == BASELINE_VERSION
     assert not (tmp_path / "b.json.tmp").exists()
+
+
+def test_dump_preserves_existing_file_permissions(tmp_path: Path) -> None:
+    """An atomic write must not silently widen `chmod` on the baseline file.
+
+    A team that has explicitly set 0o600 on pgsleuth.baseline.json (e.g.
+    because the file lives next to other sensitive config) shouldn't see
+    it widened to default umask just because pgsleuth re-wrote it.
+    """
+    path = tmp_path / "b.json"
+    path.write_text(
+        json.dumps({"version": BASELINE_VERSION, "generated_at": "x", "fingerprints": []})
+    )
+    path.chmod(0o600)
+
+    baseline = from_issues([_issue("missing_fk_index", "public.t")], now="2026-01-01T00:00:00Z")
+    dump(baseline, path)
+
+    new_mode = path.stat().st_mode & 0o777
+    assert new_mode == 0o600
+
+
+def test_dump_uses_default_permissions_when_no_existing_file(tmp_path: Path) -> None:
+    """First-time write doesn't try to copy permissions from a nonexistent file."""
+    path = tmp_path / "fresh.json"
+    baseline = from_issues([_issue("missing_fk_index", "public.t")], now="2026-01-01T00:00:00Z")
+    dump(baseline, path)
+    # File exists and is readable. Don't assert exact mode — depends on umask.
+    assert path.exists()
+    assert path.stat().st_size > 0
 
 
 def test_dump_failure_preserves_original(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
