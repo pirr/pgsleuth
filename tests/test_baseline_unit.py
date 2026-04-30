@@ -58,6 +58,22 @@ def test_fingerprint_for_matches_fingerprint() -> None:
     assert fingerprint(issue) == fingerprint_for("missing_fk_index", "public.orders(user_id)")
 
 
+def test_from_issues_dedupes_duplicate_findings() -> None:
+    """Same (checker, object_name) reported twice → one baseline entry, not two.
+
+    A buggy checker SQL could yield the same finding twice. Without dedup
+    we'd write both entries; subsequent runs would show inflated "Suppressed
+    N" counts and confusing diffs in code review.
+    """
+    a = _issue("missing_fk_index", "public.orders(user_id)", message="first wording")
+    b = _issue("missing_fk_index", "public.orders(user_id)", message="second wording")
+
+    baseline = from_issues([a, b], now="2026-01-01T00:00:00Z")
+
+    assert len(baseline.fingerprints) == 1
+    assert baseline.fingerprints[0].object == "public.orders(user_id)"
+
+
 def test_from_issues_sorts_by_checker_then_object() -> None:
     issues = [
         _issue("redundant_index", "public.b"),

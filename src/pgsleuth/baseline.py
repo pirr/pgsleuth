@@ -100,21 +100,23 @@ def from_issues(issues: Iterable[Issue], *, now: str | None = None) -> Baseline:
 
     `now` defaults to the current UTC time as ISO-8601 with seconds precision
     and a trailing 'Z'. Tests pass a fixed value for determinism.
+
+    Duplicate findings (same checker + object_name) are deduplicated to a
+    single entry — first occurrence wins. A checker that mistakenly reports
+    the same finding twice would otherwise pollute the baseline file and
+    inflate the "Suppressed N" count on subsequent runs.
     """
     timestamp = now if now is not None else _utc_iso_seconds()
-    entries = tuple(
-        sorted(
-            (
-                BaselineEntry(
-                    checker=issue.checker,
-                    object=issue.object_name,
-                    fp=fingerprint(issue),
-                )
-                for issue in issues
-            ),
-            key=lambda e: (e.checker, e.object),
-        )
-    )
+    by_fp: dict[str, BaselineEntry] = {}
+    for issue in issues:
+        fp = fingerprint(issue)
+        if fp not in by_fp:
+            by_fp[fp] = BaselineEntry(
+                checker=issue.checker,
+                object=issue.object_name,
+                fp=fp,
+            )
+    entries = tuple(sorted(by_fp.values(), key=lambda e: (e.checker, e.object)))
     return Baseline(
         version=BASELINE_VERSION,
         generated_at=timestamp,
