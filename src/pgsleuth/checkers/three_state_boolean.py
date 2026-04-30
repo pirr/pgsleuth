@@ -12,7 +12,6 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 SELECT
@@ -47,9 +46,8 @@ class ThreeStateBoolean(Checker):
             if ctx.config.is_table_excluded(row["schema"], row["table"]):
                 continue
             obj = f"{row['schema']}.{row['table']}.{row['column']}"
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="column",
                 object_name=obj,
                 message=f"Boolean column {obj} is nullable.",
@@ -58,7 +56,6 @@ class ThreeStateBoolean(Checker):
                     f"ALTER COLUMN {row['column']} SET DEFAULT false, "
                     f"ALTER COLUMN {row['column']} SET NOT NULL;"
                 ),
-                docs_url=rule_docs_url(self.name),
             )
 
 

@@ -12,7 +12,6 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 WITH idx AS (
@@ -71,9 +70,8 @@ class RedundantIndex(Checker):
             if ctx.config.is_table_excluded(row["schema"], row["table"]):
                 continue
             obj = f"{row['schema']}.{row['redundant_index']}"
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="index",
                 object_name=obj,
                 message=(
@@ -81,7 +79,6 @@ class RedundantIndex(Checker):
                     f"is a prefix of {row['covering_index']!r}."
                 ),
                 suggestion=f"DROP INDEX {row['schema']}.{row['redundant_index']};",
-                docs_url=rule_docs_url(self.name),
             )
 
 
