@@ -10,6 +10,11 @@ Scope is broader than just PKs — any column owned by a sequence (`SERIAL`,
 `bigserial`, `GENERATED ... AS IDENTITY`, or a manually-OWNED-BY sequence)
 qualifies. Non-PK serial-backed columns can overflow the same way; the type
 of column doesn't matter to the underlying failure mode.
+
+The pg_depend filter accepts deptype IN ('a', 'i', 'I'): SERIAL and manual
+OWNED BY use 'a' (AUTO); identity columns use 'i' (INTERNAL, PG10-11) or
+'I' (INTERNAL_AUTO, PG12+). Filtering only on 'a' silently drops every
+identity column, which is the modern recommended replacement for SERIAL.
 """
 
 from __future__ import annotations
@@ -38,7 +43,7 @@ FROM pg_class       seq
 JOIN pg_namespace   ns_seq ON ns_seq.oid = seq.relnamespace
 JOIN pg_depend      dep    ON dep.objid = seq.oid
                           AND dep.classid = 'pg_class'::regclass
-                          AND dep.deptype = 'a'
+                          AND dep.deptype IN ('a', 'i', 'I')
 JOIN pg_class       tbl    ON tbl.oid = dep.refobjid
 JOIN pg_namespace   ns_tbl ON ns_tbl.oid = tbl.relnamespace
 JOIN pg_attribute   col    ON col.attrelid = tbl.oid

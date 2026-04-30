@@ -38,7 +38,8 @@ JOIN pg_class       t   ON t.oid = d.refobjid
 JOIN pg_namespace   tn  ON tn.oid = t.relnamespace
 JOIN pg_attribute   a   ON a.attrelid = t.oid AND a.attnum = d.refobjsubid
 WHERE s.relkind = 'S'
-  AND d.deptype = 'a'
+  -- 'a' = SERIAL / manual OWNED BY; 'i' = identity on PG10-11; 'I' = identity on PG12+.
+  AND d.deptype IN ('a', 'i', 'I')
   AND t.relkind IN ('r', 'p')
   {schema_filter}
 ORDER BY sn.nspname, s.relname;
