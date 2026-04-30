@@ -78,6 +78,7 @@ Exit codes: `0` = clean, `1` = issues found, `2` = error.
 | [`sequence_drift`](docs/rules/sequence_drift.md) | Sequences whose `nextval` would collide with rows already in the table. |
 | [`three_state_boolean`](docs/rules/three_state_boolean.md) | Boolean columns without `NOT NULL` (true / false / null is rarely intended). |
 | [`json_over_jsonb`](docs/rules/json_over_jsonb.md) | Columns typed as `json`; `jsonb` supports indexing and is faster on read. |
+| [`timestamp_without_tz`](docs/rules/timestamp_without_tz.md) | Columns typed as `timestamp` (without time zone) — silent timezone bugs. |
 | [`varchar_length`](docs/rules/varchar_length.md) | `varchar(N)` columns where `text` is equivalent in Postgres and avoids the cap. |
 
 Every rule has a dedicated page covering rationale, examples, fix SQL, and "when to ignore." Each reported `Issue` carries a `docs_url` pointing at the rule's page, plus a severity (`info` / `warning` / `error`), a fully-qualified object name, a human-readable message, and a suggested fix.
