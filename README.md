@@ -181,6 +181,8 @@ pytest -v
 
 The test suite spins up real PostgreSQL containers (10, 13, 15, 17) via `testcontainers` and runs every check against each — Docker required.
 
+Adding a new rule? See [`docs/writing_checkers.md`](docs/writing_checkers.md) for the framework, the two base classes, the wire-up steps, and a worked example.
+
 See [`ROADMAP.md`](ROADMAP.md) for what's coming and how to pick up an item.
 
 ## License

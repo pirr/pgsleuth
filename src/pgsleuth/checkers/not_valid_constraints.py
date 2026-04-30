@@ -9,11 +9,10 @@ specific to Postgres and the reference Ruby gem can't see it.
 
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar
 
-from pgsleuth.checkers.base import Checker, Issue, Severity, register
+from pgsleuth.checkers.base import Issue, RowChecker, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 SELECT
@@ -31,31 +30,31 @@ ORDER BY n.nspname, t.relname, c.conname;
 """
 
 
-class NotValidConstraints(Checker):
+class NotValidConstraints(RowChecker):
     name: ClassVar[str] = "not_valid_constraints"
     description: ClassVar[str] = (
         "Foreign keys or CHECK constraints that were added NOT VALID and never validated."
     )
     default_severity: ClassVar[Severity] = Severity.ERROR
+    sql: ClassVar[str] = _SQL
 
-    def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        for row in iter_objects(ctx, _SQL):
-            kind = "foreign key" if row["contype"] == "f" else "check constraint"
-            obj = f"{row['schema']}.{row['table']}.{row['constraint_name']}"
-            yield self.issue(
-                ctx,
-                object_type="constraint",
-                object_name=obj,
-                message=(
-                    f"{kind.capitalize()} {row['constraint_name']!r} on "
-                    f"{row['schema']}.{row['table']} is not validated; "
-                    f"pre-existing rows may violate it."
-                ),
-                suggestion=(
-                    f"ALTER TABLE {row['schema']}.{row['table']} "
-                    f"VALIDATE CONSTRAINT {row['constraint_name']};"
-                ),
-            )
+    def check_row(self, ctx: CheckerContext, row: dict) -> Issue | None:
+        kind = "foreign key" if row["contype"] == "f" else "check constraint"
+        obj = f"{row['schema']}.{row['table']}.{row['constraint_name']}"
+        return self.issue(
+            ctx,
+            object_type="constraint",
+            object_name=obj,
+            message=(
+                f"{kind.capitalize()} {row['constraint_name']!r} on "
+                f"{row['schema']}.{row['table']} is not validated; "
+                f"pre-existing rows may violate it."
+            ),
+            suggestion=(
+                f"ALTER TABLE {row['schema']}.{row['table']} "
+                f"VALIDATE CONSTRAINT {row['constraint_name']};"
+            ),
+        )
 
 
 register(NotValidConstraints)

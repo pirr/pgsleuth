@@ -14,11 +14,10 @@ of column doesn't matter to the underlying failure mode.
 
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar
 
-from pgsleuth.checkers.base import Checker, Issue, Severity, register
+from pgsleuth.checkers.base import Issue, RowChecker, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import iter_objects
 
 # Fraction of `max_value` at which we flag a sequence-backed column.
 # 0.70 leaves headroom for the team to plan a migration before the
@@ -55,7 +54,7 @@ ORDER BY ns_tbl.nspname, tbl.relname, col.attname;
 """
 
 
-class ColumnValueAtRisk(Checker):
+class ColumnValueAtRisk(RowChecker):
     name: ClassVar[str] = "column_value_at_risk"
     description: ClassVar[str] = (
         "Sequence-backed columns whose sequence is past 70% of its type's max value."
@@ -63,39 +62,40 @@ class ColumnValueAtRisk(Checker):
     default_severity: ClassVar[Severity] = Severity.WARNING
     # pg_sequences view (used for last_value/max_value/cycle) is PG10+.
     min_version: ClassVar[int] = 100000
+    sql: ClassVar[str] = _SQL
+    schema_alias: ClassVar[str] = "ns_tbl"
 
-    def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        for row in iter_objects(ctx, _SQL, schema_alias="ns_tbl"):
-            last_value = row["last_value"]
-            max_value = row["max_value"]
-            if max_value <= 0:
-                continue  # malformed sequence; ignore rather than div-by-zero
-            ratio = float(last_value) / float(max_value)
-            if ratio < _DEFAULT_THRESHOLD:
-                continue
+    def check_row(self, ctx: CheckerContext, row: dict) -> Issue | None:
+        last_value = row["last_value"]
+        max_value = row["max_value"]
+        if max_value <= 0:
+            return None  # malformed sequence; ignore rather than div-by-zero
+        ratio = float(last_value) / float(max_value)
+        if ratio < _DEFAULT_THRESHOLD:
+            return None
 
-            obj = f"{row['schema']}.{row['table']}.{row['column']}"
-            seq = f"{row['seq_schema']}.{row['seq_name']}"
-            pct = round(ratio * 100, 1)
-            yield self.issue(
-                ctx,
-                object_type="column",
-                object_name=obj,
-                message=(
-                    f"Column {obj} ({row['column_type']}) is at {pct}% of "
-                    f"sequence {seq}'s max ({last_value} / {max_value})."
-                ),
-                suggestion=(
-                    f"ALTER TABLE {row['schema']}.{row['table']} "
-                    f"ALTER COLUMN {row['column']} TYPE bigint;"
-                ),
-                extra={
-                    "last_value": str(last_value),
-                    "max_value": str(max_value),
-                    "ratio": f"{ratio:.6f}",
-                    "sequence": seq,
-                },
-            )
+        obj = f"{row['schema']}.{row['table']}.{row['column']}"
+        seq = f"{row['seq_schema']}.{row['seq_name']}"
+        pct = round(ratio * 100, 1)
+        return self.issue(
+            ctx,
+            object_type="column",
+            object_name=obj,
+            message=(
+                f"Column {obj} ({row['column_type']}) is at {pct}% of "
+                f"sequence {seq}'s max ({last_value} / {max_value})."
+            ),
+            suggestion=(
+                f"ALTER TABLE {row['schema']}.{row['table']} "
+                f"ALTER COLUMN {row['column']} TYPE bigint;"
+            ),
+            extra={
+                "last_value": str(last_value),
+                "max_value": str(max_value),
+                "ratio": f"{ratio:.6f}",
+                "sequence": seq,
+            },
+        )
 
 
 register(ColumnValueAtRisk)

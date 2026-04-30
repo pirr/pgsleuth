@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Iterable
 
+from pgsleuth.db.catalog import iter_objects
 from pgsleuth.db.connection import rule_docs_url
 
 if TYPE_CHECKING:
@@ -91,6 +92,40 @@ class Checker(ABC):
             docs_url=rule_docs_url(self.name),
             extra=extra or {},
         )
+
+
+class RowChecker(Checker):
+    """Checker for the common 1-row-to-0-or-1-Issue pattern.
+
+    Subclass and set `sql` (a template containing `{schema_filter}`) plus
+    override `check_row(ctx, row)` to return an Issue or None. The default
+    `run()` walks `iter_objects(ctx, sql, ...)` and emits whatever
+    `check_row` returns.
+
+    Checkers whose shape is different — multiple queries, N+1, no SQL at
+    all — should subclass `Checker` directly and write their own `run()`.
+    """
+
+    sql: ClassVar[str]
+    schema_alias: ClassVar[str] = "n"
+    schema_key: ClassVar[str] = "schema"
+    table_key: ClassVar[str] = "table"
+
+    def run(self, ctx: "CheckerContext") -> Iterable[Issue]:
+        for row in iter_objects(
+            ctx,
+            self.sql,
+            schema_alias=self.schema_alias,
+            schema_key=self.schema_key,
+            table_key=self.table_key,
+        ):
+            issue = self.check_row(ctx, row)
+            if issue is not None:
+                yield issue
+
+    @abstractmethod
+    def check_row(self, ctx: "CheckerContext", row: dict) -> Issue | None:
+        """Map one catalog row to an Issue, or return None to skip it."""
 
 
 class _Registry:
