@@ -55,19 +55,6 @@ A short doc explaining how to run pgsleuth against a private database (staging, 
 
 *Why:* the "lint a live DB on a schedule" use case is just as common as "lint the migration in CI," but the two need different deployment shapes. The current docs nudge readers toward the CI shape; this fills the gap so teams running pgsleuth against private DBs don't accidentally end up whitelisting GitHub's runner ranges.
 
-## Medium-term — the killer feature
-
-### Baseline mode
-Snapshot all current findings to a JSON file; CI fails only on **new** findings going forward. Workflow:
-
-```bash
-pgsleuth baseline write --dsn $DSN          # one-time snapshot
-pgsleuth check --dsn $DSN --baseline ...    # CI: passes if all findings are baselined
-pgsleuth baseline prune --dsn $DSN          # drop entries that no longer reproduce
-```
-
-*Why:* this is what makes pgsleuth safe to drop into a 10-year-old database without a multi-week debt-paydown sprint first. None of the Postgres analogs (schemalint, schemacrawler, PgHero, squawk) have it. Full plan in [`docs/plans/baseline-mode.md`](docs/plans/baseline-mode.md).
-
 ## Medium-term — more rules
 
 Get from 8 to ~30 rules so the tool is taken seriously next to schemacrawler. High-leverage adds, in rough order:
