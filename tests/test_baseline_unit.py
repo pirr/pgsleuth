@@ -90,6 +90,25 @@ def test_from_issues_sorts_by_checker_then_object() -> None:
     assert baseline.generated_at == "2026-01-01T00:00:00Z"
 
 
+def test_unicode_object_names_round_trip(tmp_path: Path) -> None:
+    """Non-ASCII identifiers in object_name survive write→load and produce
+    stable fingerprints. Confidence test: Postgres allows UTF-8 identifiers,
+    so a real schema could have e.g. emoji or non-Latin script in a name.
+    """
+    issue = _issue("missing_fk_index", "public.users_📊(пользователь)")
+
+    baseline = from_issues([issue], now="2026-01-01T00:00:00Z")
+    path = tmp_path / "b.json"
+    dump(baseline, path)
+    loaded = load(path)
+
+    assert loaded.fingerprints[0].object == "public.users_📊(пользователь)"
+    # Fingerprint must match what fingerprint() would compute fresh from
+    # the same Issue — i.e. the file's `fp` field is recoverable, not
+    # corrupted by encoding round-trip.
+    assert loaded.fingerprints[0].fp == fingerprint(issue)
+
+
 def test_dump_then_load_roundtrip(tmp_path: Path) -> None:
     issues = [
         _issue("missing_fk_index", "public.orders(user_id)"),
