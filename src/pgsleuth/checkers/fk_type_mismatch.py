@@ -6,11 +6,10 @@ join time and prevent index use in some plans. Almost always a bug.
 
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar
 
-from pgsleuth.checkers.base import Checker, Issue, Severity, register
+from pgsleuth.checkers.base import Issue, RowChecker, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 WITH fk AS (
@@ -49,28 +48,28 @@ ORDER BY fk.schema, fk.table, fk.conname;
 """
 
 
-class ForeignKeyTypeMismatch(Checker):
+class ForeignKeyTypeMismatch(RowChecker):
     name: ClassVar[str] = "fk_type_mismatch"
     description: ClassVar[str] = "Foreign key column type differs from the referenced column type."
     default_severity: ClassVar[Severity] = Severity.ERROR
+    sql: ClassVar[str] = _SQL
 
-    def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        for row in iter_objects(ctx, _SQL):
-            child = f"{row['schema']}.{row['table']}.{row['column']}"
-            parent = f"{row['ref_schema']}.{row['ref_table']}.{row['ref_column']}"
-            yield self.issue(
-                ctx,
-                object_type="column",
-                object_name=child,
-                message=(
-                    f"{child} ({row['column_type']}) references "
-                    f"{parent} ({row['ref_column_type']}) — types differ."
-                ),
-                suggestion=(
-                    f"ALTER TABLE {row['schema']}.{row['table']} "
-                    f"ALTER COLUMN {row['column']} TYPE {row['ref_column_type']};"
-                ),
-            )
+    def check_row(self, ctx: CheckerContext, row: dict) -> Issue | None:
+        child = f"{row['schema']}.{row['table']}.{row['column']}"
+        parent = f"{row['ref_schema']}.{row['ref_table']}.{row['ref_column']}"
+        return self.issue(
+            ctx,
+            object_type="column",
+            object_name=child,
+            message=(
+                f"{child} ({row['column_type']}) references "
+                f"{parent} ({row['ref_column_type']}) — types differ."
+            ),
+            suggestion=(
+                f"ALTER TABLE {row['schema']}.{row['table']} "
+                f"ALTER COLUMN {row['column']} TYPE {row['ref_column_type']};"
+            ),
+        )
 
 
 register(ForeignKeyTypeMismatch)

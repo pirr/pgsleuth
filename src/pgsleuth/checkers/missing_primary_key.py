@@ -7,11 +7,10 @@ unambiguously, and are nearly always an oversight.
 
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar
 
-from pgsleuth.checkers.base import Checker, Issue, Severity, register
+from pgsleuth.checkers.base import Issue, RowChecker, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 SELECT
@@ -30,25 +29,25 @@ ORDER BY n.nspname, c.relname;
 """
 
 
-class MissingPrimaryKey(Checker):
+class MissingPrimaryKey(RowChecker):
     name: ClassVar[str] = "missing_primary_key"
     description: ClassVar[str] = "Ordinary tables without a primary key."
     default_severity: ClassVar[Severity] = Severity.WARNING
     min_version: ClassVar[int] = 100000  # pg_class.relispartition lands in PG10
+    sql: ClassVar[str] = _SQL
 
-    def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        for row in iter_objects(ctx, _SQL):
-            obj = f"{row['schema']}.{row['table']}"
-            yield self.issue(
-                ctx,
-                object_type="table",
-                object_name=obj,
-                message=f"Table {obj} has no primary key.",
-                suggestion=(
-                    f"ALTER TABLE {obj} ADD COLUMN id bigserial PRIMARY KEY; "
-                    f"-- or pick an existing unique column"
-                ),
-            )
+    def check_row(self, ctx: CheckerContext, row: dict) -> Issue | None:
+        obj = f"{row['schema']}.{row['table']}"
+        return self.issue(
+            ctx,
+            object_type="table",
+            object_name=obj,
+            message=f"Table {obj} has no primary key.",
+            suggestion=(
+                f"ALTER TABLE {obj} ADD COLUMN id bigserial PRIMARY KEY; "
+                f"-- or pick an existing unique column"
+            ),
+        )
 
 
 register(MissingPrimaryKey)

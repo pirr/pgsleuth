@@ -7,11 +7,10 @@ no partial-predicate, non-unique on the prefix side.
 
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar
 
-from pgsleuth.checkers.base import Checker, Issue, Severity, register
+from pgsleuth.checkers.base import Issue, RowChecker, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 WITH idx AS (
@@ -55,26 +54,26 @@ ORDER BY a.schema, a.table, a.index_name;
 """
 
 
-class RedundantIndex(Checker):
+class RedundantIndex(RowChecker):
     name: ClassVar[str] = "redundant_index"
     description: ClassVar[str] = (
         "Indexes that are a strict prefix of another index on the same table."
     )
     default_severity: ClassVar[Severity] = Severity.INFO
+    sql: ClassVar[str] = _SQL
 
-    def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        for row in iter_objects(ctx, _SQL):
-            obj = f"{row['schema']}.{row['redundant_index']}"
-            yield self.issue(
-                ctx,
-                object_type="index",
-                object_name=obj,
-                message=(
-                    f"Index {row['redundant_index']!r} on {row['schema']}.{row['table']} "
-                    f"is a prefix of {row['covering_index']!r}."
-                ),
-                suggestion=f"DROP INDEX {row['schema']}.{row['redundant_index']};",
-            )
+    def check_row(self, ctx: CheckerContext, row: dict) -> Issue | None:
+        obj = f"{row['schema']}.{row['redundant_index']}"
+        return self.issue(
+            ctx,
+            object_type="index",
+            object_name=obj,
+            message=(
+                f"Index {row['redundant_index']!r} on {row['schema']}.{row['table']} "
+                f"is a prefix of {row['covering_index']!r}."
+            ),
+            suggestion=f"DROP INDEX {row['schema']}.{row['redundant_index']};",
+        )
 
 
 register(RedundantIndex)

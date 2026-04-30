@@ -8,11 +8,10 @@ leftmost columns are exactly the FK column list. Otherwise:
 
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar
 
-from pgsleuth.checkers.base import Checker, Issue, Severity, register
+from pgsleuth.checkers.base import Issue, RowChecker, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 SELECT
@@ -38,24 +37,24 @@ ORDER BY n.nspname, t.relname, c.conname;
 """
 
 
-class MissingForeignKeyIndex(Checker):
+class MissingForeignKeyIndex(RowChecker):
     name: ClassVar[str] = "missing_fk_index"
     description: ClassVar[str] = (
         "Foreign key columns not covered by a leading index — slow cascades and joins."
     )
     default_severity: ClassVar[Severity] = Severity.WARNING
+    sql: ClassVar[str] = _SQL
 
-    def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        for row in iter_objects(ctx, _SQL):
-            cols = ", ".join(row["fk_columns"])
-            obj = f"{row['schema']}.{row['table']}({cols})"
-            yield self.issue(
-                ctx,
-                object_type="constraint",
-                object_name=obj,
-                message=(f"Foreign key {row['constraint_name']!r} on {obj} has no covering index."),
-                suggestion=(f"CREATE INDEX ON {row['schema']}.{row['table']} ({cols});"),
-            )
+    def check_row(self, ctx: CheckerContext, row: dict) -> Issue | None:
+        cols = ", ".join(row["fk_columns"])
+        obj = f"{row['schema']}.{row['table']}({cols})"
+        return self.issue(
+            ctx,
+            object_type="constraint",
+            object_name=obj,
+            message=(f"Foreign key {row['constraint_name']!r} on {obj} has no covering index."),
+            suggestion=(f"CREATE INDEX ON {row['schema']}.{row['table']} ({cols});"),
+        )
 
 
 register(MissingForeignKeyIndex)

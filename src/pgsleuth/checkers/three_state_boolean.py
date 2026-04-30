@@ -7,11 +7,10 @@ or NULL means something the type doesn't capture.
 
 from __future__ import annotations
 
-from typing import ClassVar, Iterable
+from typing import ClassVar
 
-from pgsleuth.checkers.base import Checker, Issue, Severity, register
+from pgsleuth.checkers.base import Issue, RowChecker, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 SELECT
@@ -31,27 +30,27 @@ ORDER BY n.nspname, c.relname, a.attname;
 """
 
 
-class ThreeStateBoolean(Checker):
+class ThreeStateBoolean(RowChecker):
     name: ClassVar[str] = "three_state_boolean"
     description: ClassVar[str] = (
         "Boolean columns without NOT NULL turn boolean into a three-valued field."
     )
     default_severity: ClassVar[Severity] = Severity.WARNING
+    sql: ClassVar[str] = _SQL
 
-    def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        for row in iter_objects(ctx, _SQL):
-            obj = f"{row['schema']}.{row['table']}.{row['column']}"
-            yield self.issue(
-                ctx,
-                object_type="column",
-                object_name=obj,
-                message=f"Boolean column {obj} is nullable.",
-                suggestion=(
-                    f"ALTER TABLE {row['schema']}.{row['table']} "
-                    f"ALTER COLUMN {row['column']} SET DEFAULT false, "
-                    f"ALTER COLUMN {row['column']} SET NOT NULL;"
-                ),
-            )
+    def check_row(self, ctx: CheckerContext, row: dict) -> Issue | None:
+        obj = f"{row['schema']}.{row['table']}.{row['column']}"
+        return self.issue(
+            ctx,
+            object_type="column",
+            object_name=obj,
+            message=f"Boolean column {obj} is nullable.",
+            suggestion=(
+                f"ALTER TABLE {row['schema']}.{row['table']} "
+                f"ALTER COLUMN {row['column']} SET DEFAULT false, "
+                f"ALTER COLUMN {row['column']} SET NOT NULL;"
+            ),
+        )
 
 
 register(ThreeStateBoolean)
