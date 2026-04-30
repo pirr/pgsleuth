@@ -87,13 +87,15 @@ Return `None` from `check_row` to skip a row that the SQL pulled in but doesn't 
 
 ## Wire it up
 
-Three things, none of them automatic:
+Two things, neither of them in `src/`:
 
-1. **Add the import** to `src/pgsleuth/checkers/__init__.py`. **The CLI imports that barrel exactly once at startup; checkers not imported there are silently invisible.** This is the single most common new-checker mistake.
+1. **Add a docs page** at `docs/rules/<name>.md` covering rationale, an example of the smell, the fix SQL, and "when to ignore." Each `Issue` carries a `docs_url` that points here automatically — no need to wire it.
 
-2. **Add a docs page** at `docs/rules/<name>.md` covering rationale, an example of the smell, the fix SQL, and "when to ignore." Each `Issue` carries a `docs_url` that points here automatically — no need to wire it.
+2. **Add a row** to the `## Checks` table in the README, linking to the docs page.
 
-3. **Add a row** to the `## Checks` table in the README, linking to the docs page.
+The checker module itself is auto-discovered: `src/pgsleuth/checkers/__init__.py` walks the directory and imports every submodule on package import, so the `register(MyChecker)` call at the bottom of your file runs without any barrel edit. **The single thing you must remember: call `register(MyChecker)` at the bottom of the module.** Skip that and the rule won't appear in `pgsleuth list-checkers` even though the file exists. The `tests/test_auto_discovery.py` suite catches this case.
+
+If you add a *helper* module that isn't a checker (shared SQL, utility code), prefix the filename with `_` so auto-discovery skips it — e.g. `_partition_helpers.py`. (`base.py` is also skipped explicitly.)
 
 ## Pick the severity
 
