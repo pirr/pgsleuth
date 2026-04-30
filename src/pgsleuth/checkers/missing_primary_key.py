@@ -11,7 +11,7 @@ from typing import ClassVar, Iterable
 
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
+from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 SELECT
@@ -37,12 +37,7 @@ class MissingPrimaryKey(Checker):
     min_version: ClassVar[int] = 100000  # pg_class.relispartition lands in PG10
 
     def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        sql_text = _SQL.format(
-            schema_filter=excluded_schema_clause(ctx.config.excluded_schemas, "n"),
-        )
-        for row in fetch_all(ctx.conn, sql_text):
-            if ctx.config.is_table_excluded(row["schema"], row["table"]):
-                continue
+        for row in iter_objects(ctx, _SQL):
             obj = f"{row['schema']}.{row['table']}"
             yield self.issue(
                 ctx,

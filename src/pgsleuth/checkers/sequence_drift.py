@@ -20,7 +20,7 @@ from psycopg import sql
 
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
+from pgsleuth.db.catalog import iter_objects
 
 _OWNED_SEQUENCES_SQL = """
 SELECT
@@ -55,15 +55,14 @@ class SequenceDrift(Checker):
     min_version: ClassVar[int] = 100000  # pg_sequence relation lands in PG10
 
     def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        owned_sql = _OWNED_SEQUENCES_SQL.format(
-            schema_filter=excluded_schema_clause(ctx.config.excluded_schemas, "tn"),
+        rows = iter_objects(
+            ctx,
+            _OWNED_SEQUENCES_SQL,
+            schema_alias="tn",
+            schema_key="table_schema",
+            table_key="table_name",
         )
-        rows = fetch_all(ctx.conn, owned_sql)
-
         for row in rows:
-            if ctx.config.is_table_excluded(row["table_schema"], row["table_name"]):
-                continue
-
             seq_qualified = f"{row['seq_schema']}.{row['seq_name']}"
             next_value = self._next_value(
                 ctx.conn,
