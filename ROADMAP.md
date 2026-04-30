@@ -26,9 +26,6 @@ open pgsleuth-report/index.html
 
 *Why:* fills the "share this with someone who doesn't live in the terminal" gap. DBAs, SREs, engineering managers, security reviewers, auditors — none of them will pip-install pgsleuth and pipe through `jq`. The text reporter is for the developer running pgsleuth; SARIF is for the dashboard pgsleuth feeds; HTML is for the human reading the result. Pairs naturally with the *out-of-CI execution guide* — cron the report into S3 weekly, link from the team wiki. ~250 LOC including the templates.
 
-### `statement_timeout` guardrails
-Each checker runs with a configurable `statement_timeout` (default ~5s) so a single slow check can't hang CI on a 50TB database. Configurable via `pgsleuth.toml` per checker, with a project-wide default. *Why:* without this, `redundant_index` and `not_valid_constraints` are O(catalog size) and can easily exceed CI step timeouts on real production schemas.
-
 ### GitHub Action wrapper (for ephemeral-DB CI)
 Composite `action.yml` at the repo root so users get pgsleuth into CI with five lines of YAML:
 
@@ -79,7 +76,7 @@ When a checker hits `statement_timeout` or is version-gated, the skip goes to st
 
 ## Medium-term — more rules
 
-Get from 8 to ~30 rules so the tool is taken seriously next to schemacrawler. High-leverage adds, in rough order:
+Get from 9 to ~30 rules so the tool is taken seriously next to schemacrawler. High-leverage adds, in rough order:
 
 - **`unused_index`** — `pg_stat_user_indexes.idx_scan = 0` over a configurable window. Pairs naturally with `redundant_index`.
 - **`varchar_length`** — `varchar(N)` where `text` would be equivalent (Postgres has no perf benefit to a length cap).
