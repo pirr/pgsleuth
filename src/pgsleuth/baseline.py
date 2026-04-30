@@ -181,6 +181,12 @@ def dump(baseline: Baseline, path: Path) -> None:
     Writes to `<path>.tmp` first then `os.replace` — so a failed write or
     crash leaves the existing file intact. Pretty JSON, sorted entries,
     deterministic output for clean diffs in code review.
+
+    If `path` already exists, its mode bits (e.g. an explicit
+    `chmod 600` for a sensitive baseline) are copied onto the new file
+    before the swap. Without this, `os.replace` would leave the new
+    file with default umask permissions and silently widen any
+    restriction the team had placed on the original.
     """
     payload = {
         "version": baseline.version,
@@ -194,6 +200,18 @@ def dump(baseline: Baseline, path: Path) -> None:
         json.dumps(payload, indent=2, sort_keys=False) + "\n",
         encoding="utf-8",
     )
+
+    # Preserve permissions of the file we're replacing, if any. Best-effort:
+    # if the existing file is gone or unreadable between exists() and stat(),
+    # we just leave the .tmp at default permissions — same outcome as if the
+    # file never existed.
+    try:
+        existing_mode = path.stat().st_mode & 0o777
+    except OSError:
+        existing_mode = None
+    if existing_mode is not None:
+        os.chmod(tmp, existing_mode)
+
     os.replace(tmp, path)
 
 

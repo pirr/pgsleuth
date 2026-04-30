@@ -130,6 +130,36 @@ def test_dump_is_atomic(tmp_path: Path) -> None:
     assert not (tmp_path / "b.json.tmp").exists()
 
 
+def test_dump_preserves_existing_file_permissions(tmp_path: Path) -> None:
+    """An atomic write must not silently widen `chmod` on the baseline file.
+
+    A team that has explicitly set 0o600 on pgsleuth.baseline.json (e.g.
+    because the file lives next to other sensitive config) shouldn't see
+    it widened to default umask just because pgsleuth re-wrote it.
+    """
+    path = tmp_path / "b.json"
+    path.write_text(
+        json.dumps({"version": BASELINE_VERSION, "generated_at": "x", "fingerprints": []})
+    )
+    path.chmod(0o600)
+
+    baseline = from_issues([_issue("missing_fk_index", "public.t")], now="2026-01-01T00:00:00Z")
+    dump(baseline, path)
+
+    new_mode = path.stat().st_mode & 0o777
+    assert new_mode == 0o600
+
+
+def test_dump_uses_default_permissions_when_no_existing_file(tmp_path: Path) -> None:
+    """First-time write doesn't try to copy permissions from a nonexistent file."""
+    path = tmp_path / "fresh.json"
+    baseline = from_issues([_issue("missing_fk_index", "public.t")], now="2026-01-01T00:00:00Z")
+    dump(baseline, path)
+    # File exists and is readable. Don't assert exact mode — depends on umask.
+    assert path.exists()
+    assert path.stat().st_size > 0
+
+
 def test_dump_failure_preserves_original(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """If os.replace fails after the .tmp is written, the original survives."""
     path = tmp_path / "b.json"
