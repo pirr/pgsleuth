@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Iterable
 
+from pgsleuth.db.connection import rule_docs_url
+
 if TYPE_CHECKING:
     from pgsleuth.context import CheckerContext
 
@@ -60,6 +62,35 @@ class Checker(ABC):
         if cls.max_version is not None and server_version >= cls.max_version:
             return False
         return True
+
+    def issue(
+        self,
+        ctx: "CheckerContext",
+        *,
+        object_type: str,
+        object_name: str,
+        message: str,
+        suggestion: str | None = None,
+        extra: dict[str, str] | None = None,
+    ) -> Issue:
+        """Build an Issue with this checker's identity prefilled.
+
+        `checker`, `severity`, and `docs_url` are derived from the class —
+        passing them explicitly at every yield site is boilerplate and a
+        silent-bug surface (typo or stale copy-paste produces a finding
+        whose docs_url points at the wrong rule, or whose severity ignores
+        the per-checker config override).
+        """
+        return Issue(
+            checker=self.name,
+            severity=ctx.config.severity_for(self.name, self.default_severity),
+            object_type=object_type,
+            object_name=object_name,
+            message=message,
+            suggestion=suggestion,
+            docs_url=rule_docs_url(self.name),
+            extra=extra or {},
+        )
 
 
 class _Registry:

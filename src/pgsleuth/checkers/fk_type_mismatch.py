@@ -11,7 +11,6 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 WITH fk AS (
@@ -64,9 +63,8 @@ class ForeignKeyTypeMismatch(Checker):
                 continue
             child = f"{row['schema']}.{row['table']}.{row['column']}"
             parent = f"{row['ref_schema']}.{row['ref_table']}.{row['ref_column']}"
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="column",
                 object_name=child,
                 message=(
@@ -77,7 +75,6 @@ class ForeignKeyTypeMismatch(Checker):
                     f"ALTER TABLE {row['schema']}.{row['table']} "
                     f"ALTER COLUMN {row['column']} TYPE {row['ref_column_type']};"
                 ),
-                docs_url=rule_docs_url(self.name),
             )
 
 

@@ -12,7 +12,6 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 SELECT
@@ -45,9 +44,8 @@ class PrimaryKeyType(Checker):
             if ctx.config.is_table_excluded(row["schema"], row["table"]):
                 continue
             obj = f"{row['schema']}.{row['table']}.{row['column']}"
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="column",
                 object_name=obj,
                 message=f"Primary key {obj} is {row['type']}; consider bigint or uuid.",
@@ -55,7 +53,6 @@ class PrimaryKeyType(Checker):
                     f"ALTER TABLE {row['schema']}.{row['table']} "
                     f"ALTER COLUMN {row['column']} TYPE bigint;"
                 ),
-                docs_url=rule_docs_url(self.name),
             )
 
 

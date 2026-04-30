@@ -21,7 +21,6 @@ from psycopg import sql
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 _OWNED_SEQUENCES_SQL = """
 SELECT
@@ -85,9 +84,8 @@ class SequenceDrift(Checker):
                 continue
 
             obj = seq_qualified
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="sequence",
                 object_name=obj,
                 message=(
@@ -100,7 +98,6 @@ class SequenceDrift(Checker):
                     f"(SELECT MAX({row['column_name']}) FROM "
                     f"{row['table_schema']}.{row['table_name']}));"
                 ),
-                docs_url=rule_docs_url(self.name),
                 extra={
                     "next_value": str(next_value),
                     "max_value": str(max_value),

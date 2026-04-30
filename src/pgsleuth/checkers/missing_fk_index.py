@@ -13,7 +13,6 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 SELECT
@@ -55,14 +54,12 @@ class MissingForeignKeyIndex(Checker):
                 continue
             cols = ", ".join(row["fk_columns"])
             obj = f"{row['schema']}.{row['table']}({cols})"
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="constraint",
                 object_name=obj,
                 message=(f"Foreign key {row['constraint_name']!r} on {obj} has no covering index."),
                 suggestion=(f"CREATE INDEX ON {row['schema']}.{row['table']} ({cols});"),
-                docs_url=rule_docs_url(self.name),
             )
 
 

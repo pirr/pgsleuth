@@ -19,7 +19,6 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 # Fraction of `max_value` at which we flag a sequence-backed column.
 # 0.70 leaves headroom for the team to plan a migration before the
@@ -84,9 +83,8 @@ class ColumnValueAtRisk(Checker):
             obj = f"{row['schema']}.{row['table']}.{row['column']}"
             seq = f"{row['seq_schema']}.{row['seq_name']}"
             pct = round(ratio * 100, 1)
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="column",
                 object_name=obj,
                 message=(
@@ -97,7 +95,6 @@ class ColumnValueAtRisk(Checker):
                     f"ALTER TABLE {row['schema']}.{row['table']} "
                     f"ALTER COLUMN {row['column']} TYPE bigint;"
                 ),
-                docs_url=rule_docs_url(self.name),
                 extra={
                     "last_value": str(last_value),
                     "max_value": str(max_value),

@@ -14,7 +14,6 @@ from typing import ClassVar, Iterable
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
-from pgsleuth.db.connection import rule_docs_url
 
 _SQL = """
 SELECT
@@ -48,9 +47,8 @@ class NotValidConstraints(Checker):
                 continue
             kind = "foreign key" if row["contype"] == "f" else "check constraint"
             obj = f"{row['schema']}.{row['table']}.{row['constraint_name']}"
-            yield Issue(
-                checker=self.name,
-                severity=ctx.config.severity_for(self.name, self.default_severity),
+            yield self.issue(
+                ctx,
                 object_type="constraint",
                 object_name=obj,
                 message=(
@@ -62,7 +60,6 @@ class NotValidConstraints(Checker):
                     f"ALTER TABLE {row['schema']}.{row['table']} "
                     f"VALIDATE CONSTRAINT {row['constraint_name']};"
                 ),
-                docs_url=rule_docs_url(self.name),
             )
 
 
