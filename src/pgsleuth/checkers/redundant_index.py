@@ -11,7 +11,7 @@ from typing import ClassVar, Iterable
 
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
+from pgsleuth.db.catalog import iter_objects
 
 _SQL = """
 WITH idx AS (
@@ -63,12 +63,7 @@ class RedundantIndex(Checker):
     default_severity: ClassVar[Severity] = Severity.INFO
 
     def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        sql = _SQL.format(
-            schema_filter=excluded_schema_clause(ctx.config.excluded_schemas, "n"),
-        )
-        for row in fetch_all(ctx.conn, sql):
-            if ctx.config.is_table_excluded(row["schema"], row["table"]):
-                continue
+        for row in iter_objects(ctx, _SQL):
             obj = f"{row['schema']}.{row['redundant_index']}"
             yield self.issue(
                 ctx,

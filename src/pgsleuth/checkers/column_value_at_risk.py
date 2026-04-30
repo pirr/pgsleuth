@@ -18,7 +18,7 @@ from typing import ClassVar, Iterable
 
 from pgsleuth.checkers.base import Checker, Issue, Severity, register
 from pgsleuth.context import CheckerContext
-from pgsleuth.db.catalog import excluded_schema_clause, fetch_all
+from pgsleuth.db.catalog import iter_objects
 
 # Fraction of `max_value` at which we flag a sequence-backed column.
 # 0.70 leaves headroom for the team to plan a migration before the
@@ -65,13 +65,7 @@ class ColumnValueAtRisk(Checker):
     min_version: ClassVar[int] = 100000
 
     def run(self, ctx: CheckerContext) -> Iterable[Issue]:
-        sql = _SQL.format(
-            schema_filter=excluded_schema_clause(ctx.config.excluded_schemas, "ns_tbl"),
-        )
-        for row in fetch_all(ctx.conn, sql):
-            if ctx.config.is_table_excluded(row["schema"], row["table"]):
-                continue
-
+        for row in iter_objects(ctx, _SQL, schema_alias="ns_tbl"):
             last_value = row["last_value"]
             max_value = row["max_value"]
             if max_value <= 0:
