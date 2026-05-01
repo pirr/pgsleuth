@@ -4,6 +4,7 @@ registers them with the global registry."""
 from pgsleuth.checkers import (  # noqa: F401
     column_value_at_risk,
     fk_type_mismatch,
+    fk_without_on_delete,
     json_over_jsonb,
     missing_fk_index,
     missing_primary_key,
