@@ -14,5 +14,6 @@ from pgsleuth.checkers import (  # noqa: F401
     sequence_drift,
     three_state_boolean,
     timestamp_without_tz,
+    unused_index,
     varchar_length,
 )
