@@ -17,11 +17,61 @@ import psycopg
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+from pgsleuth import baseline as baseline_module
+from pgsleuth.checkers.base import Issue
 from pgsleuth.config import Config
 from pgsleuth.context import CheckerContext
 from pgsleuth.db.connection import server_version_num
+from pgsleuth.engine import RunResult
 
 PG_VERSIONS = ["10-alpine", "13-alpine", "15-alpine", "17-alpine"]
+
+
+def make_run_result(
+    issues: list[Issue],
+    *,
+    baseline: baseline_module.Baseline | None = None,
+    ran: frozenset[str] | None = None,
+) -> RunResult:
+    """Build a RunResult that mirrors what `engine.run` would produce.
+
+    `ran` defaults to the set of checkers that produced an issue. Pass it
+    explicitly when a test needs to distinguish "checker ran with no findings"
+    (in `ran`, makes its baseline entries eligible for stale-warning) from
+    "checker didn't run" (not in `ran`, baseline entries treated as unknown).
+    """
+    if ran is None:
+        ran = frozenset(i.checker for i in issues)
+    if baseline is None:
+        return RunResult(issues=list(issues), skipped=(), ran=ran)
+    filtered = baseline_module.filter_issues(issues, baseline)
+    stale = tuple(
+        e for e in baseline_module.stale_entries(baseline, filtered.matched_fps) if e.checker in ran
+    )
+    unknown = tuple(baseline_module.unknown_checker_entries(baseline, ran))
+    return RunResult(
+        issues=filtered.kept,
+        skipped=(),
+        ran=ran,
+        suppressed_count=filtered.suppressed_count,
+        matched_baseline_fps=filtered.matched_fps,
+        stale_baseline_entries=stale,
+        unknown_baseline_entries=unknown,
+    )
+
+
+def fake_engine_run(issues=(), ran: frozenset[str] | None = None):
+    """side_effect for `patch("pgsleuth.engine.run", ...)`.
+
+    Replaces the old pattern of patching `cli._run_all` with a flat issue list.
+    The returned function honors the engine's `(ctx, *, threshold, baseline)`
+    signature and runs baseline filtering through `make_run_result`.
+    """
+
+    def _side_effect(ctx, *, threshold, baseline=None):
+        return make_run_result(list(issues), baseline=baseline, ran=ran)
+
+    return _side_effect
 
 
 @pytest.fixture(scope="session", params=PG_VERSIONS, ids=lambda p: f"pg{p.split('-')[0]}")
