@@ -75,6 +75,7 @@ Exit codes: `0` = clean, `1` = issues found, `2` = error.
 | [`fk_type_mismatch`](docs/rules/fk_type_mismatch.md) | FK columns whose type differs from the referenced PK/unique column. |
 | [`fk_without_on_delete`](docs/rules/fk_without_on_delete.md) | FKs with no explicit `ON DELETE` (defaults to `NO ACTION`, rarely the intended choice). |
 | [`redundant_index`](docs/rules/redundant_index.md) | Indexes whose column list is a strict prefix of another index on the table. |
+| [`unused_index`](docs/rules/unused_index.md) | Secondary indexes that have never been scanned (`pg_stat_user_indexes.idx_scan = 0`). |
 | [`not_valid_constraints`](docs/rules/not_valid_constraints.md) | FK and CHECK constraints stuck at `NOT VALID` (`convalidated = false`). |
 | [`sequence_drift`](docs/rules/sequence_drift.md) | Sequences whose `nextval` would collide with rows already in the table. |
 | [`three_state_boolean`](docs/rules/three_state_boolean.md) | Boolean columns without `NOT NULL` (true / false / null is rarely intended). |

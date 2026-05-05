@@ -6,6 +6,8 @@ Each rule has a dedicated page covering what it catches, why it matters, how to 
 | --- | --- | --- |
 | [`column_value_at_risk`](column_value_at_risk.md) | warning | Sequence-backed columns whose sequence is past 70% of its type's max. |
 | [`fk_type_mismatch`](fk_type_mismatch.md) | error | FK column type differs from the referenced column type. |
+| [`fk_without_on_delete`](fk_without_on_delete.md) | warning | FKs with no explicit `ON DELETE` (defaults to `NO ACTION`, rarely intended). |
+| [`json_over_jsonb`](json_over_jsonb.md) | info | Columns typed `json`; `jsonb` supports indexing and is faster on read. |
 | [`missing_fk_index`](missing_fk_index.md) | warning | Foreign-key columns not covered by a leading index — slow cascades and joins. |
 | [`missing_primary_key`](missing_primary_key.md) | warning | Ordinary tables without a primary key. |
 | [`not_valid_constraints`](not_valid_constraints.md) | error | FK and CHECK constraints stuck at `NOT VALID`. |
@@ -13,6 +15,9 @@ Each rule has a dedicated page covering what it catches, why it matters, how to 
 | [`redundant_index`](redundant_index.md) | info | An index whose column list is a strict prefix of another on the same table. |
 | [`sequence_drift`](sequence_drift.md) | error | Sequence's next value would collide with rows already in the column. |
 | [`three_state_boolean`](three_state_boolean.md) | warning | Nullable boolean columns turn `bool` into three-valued logic. |
+| [`timestamp_without_tz`](timestamp_without_tz.md) | warning | Columns typed `timestamp` (without time zone) — silent timezone bugs. |
+| [`unused_index`](unused_index.md) | info | Secondary indexes never scanned per `pg_stat_user_indexes.idx_scan`. |
+| [`varchar_length`](varchar_length.md) | info | `varchar(N)` columns where `text` is equivalent in Postgres. |
 
 ## Severity philosophy
 
