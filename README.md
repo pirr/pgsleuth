@@ -69,6 +69,7 @@ Exit codes: `0` = clean, `1` = issues found, `2` = error.
 | Name | Catches |
 | --- | --- |
 | [`missing_primary_key`](docs/rules/missing_primary_key.md) | Ordinary tables without a PK (breaks logical replication, ambiguous rows). |
+| [`missing_replica_identity`](docs/rules/missing_replica_identity.md) | Tables whose effective `REPLICA IDENTITY` is empty — UPDATE/DELETE won't replicate logically. |
 | [`primary_key_type`](docs/rules/primary_key_type.md) | Primary keys whose type can run out of values (e.g. `int4` on a hot table). |
 | [`column_value_at_risk`](docs/rules/column_value_at_risk.md) | Sequence-backed columns whose sequence is past 70% of its type's max value. |
 | [`missing_fk_index`](docs/rules/missing_fk_index.md) | Foreign-key columns without a covering index — slow joins, slow `ON DELETE`. |
