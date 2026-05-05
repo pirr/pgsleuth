@@ -9,6 +9,8 @@ from click.testing import CliRunner
 
 from pgsleuth.cli import main
 
+from .conftest import fake_engine_run
+
 
 @contextmanager
 def _fake_connect(_dsn: str):
@@ -18,8 +20,8 @@ def _fake_connect(_dsn: str):
 def test_unsupported_version_exits_with_message() -> None:
     runner = CliRunner()
     with (
-        patch("pgsleuth.cli.connect", _fake_connect),
-        patch("pgsleuth.cli.server_version_num", return_value=90603),  # PG 9.6.3
+        patch("pgsleuth.engine.connect", _fake_connect),
+        patch("pgsleuth.engine.server_version_num", return_value=90603),  # PG 9.6.3
     ):
         result = runner.invoke(main, ["check", "--dsn", "postgresql://x/y"])
 
@@ -31,11 +33,10 @@ def test_unsupported_version_exits_with_message() -> None:
 def test_supported_version_does_not_refuse() -> None:
     # When the server is supported but no checkers find anything, exit 0.
     runner = CliRunner()
-    fake_issues: list = []
     with (
-        patch("pgsleuth.cli.connect", _fake_connect),
-        patch("pgsleuth.cli.server_version_num", return_value=150004),
-        patch("pgsleuth.cli._run_all", return_value=iter(fake_issues)),
+        patch("pgsleuth.engine.connect", _fake_connect),
+        patch("pgsleuth.engine.server_version_num", return_value=150004),
+        patch("pgsleuth.engine.run", side_effect=fake_engine_run()),
     ):
         result = runner.invoke(main, ["check", "--dsn", "postgresql://x/y"])
 

@@ -81,11 +81,13 @@ def _fake_connect(_dsn: str):
 
 
 def _capture_config(captured: list[Config]):
-    """Return a side_effect that captures the CheckerContext.config and yields no findings."""
+    """Return a side_effect that captures the CheckerContext.config and yields an empty RunResult."""
 
-    def wrapper(ctx: CheckerContext, threshold: int):
+    def wrapper(ctx: CheckerContext, *, threshold: int, baseline=None):
         captured.append(ctx.config)
-        return iter(())
+        from pgsleuth.engine import RunResult
+
+        return RunResult(issues=[], skipped=(), ran=frozenset())
 
     return wrapper
 
@@ -94,9 +96,9 @@ def test_cli_flag_overrides_config() -> None:
     runner = CliRunner()
     captured: list[Config] = []
     with (
-        patch("pgsleuth.cli.connect", _fake_connect),
-        patch("pgsleuth.cli.server_version_num", return_value=150004),
-        patch("pgsleuth.cli._run_all", side_effect=_capture_config(captured)),
+        patch("pgsleuth.engine.connect", _fake_connect),
+        patch("pgsleuth.engine.server_version_num", return_value=150004),
+        patch("pgsleuth.engine.run", side_effect=_capture_config(captured)),
     ):
         result = runner.invoke(
             main,
@@ -110,9 +112,9 @@ def test_cli_no_statement_timeout_flag() -> None:
     runner = CliRunner()
     captured: list[Config] = []
     with (
-        patch("pgsleuth.cli.connect", _fake_connect),
-        patch("pgsleuth.cli.server_version_num", return_value=150004),
-        patch("pgsleuth.cli._run_all", side_effect=_capture_config(captured)),
+        patch("pgsleuth.engine.connect", _fake_connect),
+        patch("pgsleuth.engine.server_version_num", return_value=150004),
+        patch("pgsleuth.engine.run", side_effect=_capture_config(captured)),
     ):
         result = runner.invoke(
             main,
@@ -125,8 +127,8 @@ def test_cli_no_statement_timeout_flag() -> None:
 def test_cli_conflicting_flags_raise_usage_error() -> None:
     runner = CliRunner()
     with (
-        patch("pgsleuth.cli.connect", _fake_connect),
-        patch("pgsleuth.cli.server_version_num", return_value=150004),
+        patch("pgsleuth.engine.connect", _fake_connect),
+        patch("pgsleuth.engine.server_version_num", return_value=150004),
     ):
         result = runner.invoke(
             main,
@@ -217,18 +219,24 @@ def test_run_all_skips_slow_checker_continues_with_others(
 ) -> None:
     """A slow checker is skipped; the other checker's findings still surface."""
     from pgsleuth.checkers.base import _Registry
-    from pgsleuth.cli import _run_all
+    from pgsleuth.engine import run as engine_run
 
     test_registry = _Registry()
     test_registry.register(_SlowChecker)
     test_registry.register(_FastChecker)
-    monkeypatch.setattr("pgsleuth.cli.registry", test_registry)
+    monkeypatch.setattr("pgsleuth.engine.registry", test_registry)
 
     cfg = Config(statement_timeout_ms=200)
     ctx = CheckerContext(conn=conn, config=cfg, server_version=150004)
 
-    issues = list(_run_all(ctx, threshold=Severity.INFO.rank))
+    result = engine_run(ctx, threshold=Severity.INFO.rank)
 
-    object_names = {i.object_name for i in issues}
+    object_names = {i.object_name for i in result.issues}
     assert "public.fast_finding" in object_names
     assert "never.reached" not in object_names
+    # The structured RunResult records both the skip and the successful run:
+    assert any(
+        s.checker == "_test_slow" and s.reason == "statement_timeout" for s in result.skipped
+    )
+    assert "_test_fast" in result.ran
+    assert "_test_slow" not in result.ran

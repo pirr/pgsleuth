@@ -4,26 +4,17 @@ from __future__ import annotations
 
 import re
 import sys
-from contextlib import nullcontext
 from pathlib import Path
-from typing import Iterable
 
 import click
-import psycopg
 from rich.console import Console
 
 import pgsleuth.checkers  # noqa: F401  -- registers built-in checkers
 from pgsleuth import baseline as baseline_module
-from pgsleuth.checkers.base import Issue, Severity, registry
+from pgsleuth import engine
+from pgsleuth.checkers.base import Severity, registry
 from pgsleuth.config import DEFAULT_EXCLUDED_SCHEMAS, Config
-from pgsleuth.context import CheckerContext
-from pgsleuth.db.connection import (
-    SUPPORTED_VERSION_MIN,
-    SUPPORTED_VERSION_NAMES,
-    connect,
-    server_version_num,
-    statement_timeout,
-)
+from pgsleuth.engine import RunResult
 from pgsleuth.reporters import json as json_reporter
 from pgsleuth.reporters import text as text_reporter
 
@@ -100,18 +91,6 @@ def _common_options(f):
     return f
 
 
-def _running_checkers(config: Config) -> frozenset[str]:
-    """Names of checkers that this invocation will actually run.
-
-    Excludes checkers filtered out by --checkers, disabled in TOML, or
-    not-yet-imported. Does *not* exclude checkers that will be skipped
-    at runtime due to version gating or `statement_timeout` cancellation —
-    those are best-effort knowledge we'd need to track inside `_run_all`
-    to be precise, and the practical impact is small.
-    """
-    return frozenset(name for name in registry.names() if config.is_checker_enabled(name))
-
-
 def _build_config_from_options(
     *,
     config_path: Path | None,
@@ -150,6 +129,30 @@ def _build_config_from_options(
         config.statement_timeout_ms = int(statement_timeout_seconds * 1000)
 
     return config
+
+
+def _print_skipped(result: RunResult) -> None:
+    """Emit one stderr line per skipped checker (version-gated or timed out)."""
+    for sk in result.skipped:
+        click.echo(f"[skipped] {sk.checker} — {sk.detail}", err=True)
+
+
+def _run_engine(dsn: str, config: Config, threshold: int, baseline=None) -> RunResult:
+    """Open a context and dispatch the engine, translating engine errors to exit-2.
+
+    Centralizes the try/except so the three subcommands stay focused on their
+    own argument-handling. `engine.UnsupportedServerVersionError` and any other
+    DB exception both exit 2 with the message echoed to stderr.
+    """
+    try:
+        with engine.open_context(dsn, config) as ctx:
+            return engine.run(ctx, threshold=threshold, baseline=baseline)
+    except engine.UnsupportedServerVersionError as exc:
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"pgsleuth: {exc}", err=True)
+        sys.exit(2)
 
 
 @main.command("check")
@@ -222,43 +225,28 @@ def check(
             click.echo(f"pgsleuth: {exc}", err=True)
             sys.exit(2)
 
-    try:
-        issues = _collect_issues(dsn, config, threshold)
-    except Exception as exc:  # noqa: BLE001
-        click.echo(f"pgsleuth: {exc}", err=True)
-        sys.exit(2)
+    result = _run_engine(dsn, config, threshold, baseline=baseline)
+    _print_skipped(result)
 
-    suppressed_count = 0
-    if baseline is not None:
-        result = baseline_module.filter_issues(issues, baseline)
-        issues = result.kept
-        suppressed_count = result.suppressed_count
-
-        # An entry is only meaningfully "stale" if its checker was actually
-        # in scope this run. Entries whose checker was filtered out
-        # (--checkers, [pgsleuth.checkers.X].enabled=false, version-gated)
-        # can't be matched against findings that were never produced —
-        # warning about them would be misleading.
-        running = _running_checkers(config)
-        stale = [
-            e
-            for e in baseline_module.stale_entries(baseline, result.matched_fps)
-            if e.checker in running
-        ]
-        if stale:
-            click.echo(
-                f"pgsleuth: {len(stale)} baseline "
-                f"{'entry' if len(stale) == 1 else 'entries'} did not reproduce. "
-                f"Run 'pgsleuth baseline prune' to clean up.",
-                err=True,
-            )
+    if result.stale_baseline_entries:
+        n = len(result.stale_baseline_entries)
+        click.echo(
+            f"pgsleuth: {n} baseline "
+            f"{'entry' if n == 1 else 'entries'} did not reproduce. "
+            f"Run 'pgsleuth baseline prune' to clean up.",
+            err=True,
+        )
 
     if output_format == "json":
-        json_reporter.render(issues, suppressed=suppressed_count)
+        json_reporter.render(
+            result.issues,
+            suppressed=result.suppressed_count,
+            skipped=result.skipped,
+        )
     else:
-        text_reporter.render(issues, suppressed=suppressed_count)
+        text_reporter.render(result.issues, suppressed=result.suppressed_count)
 
-    sys.exit(1 if issues else 0)
+    sys.exit(1 if result.issues else 0)
 
 
 @main.group("baseline")
@@ -305,15 +293,10 @@ def baseline_write(
     )
 
     # Capture everything; threshold=info means "all severities count".
-    threshold = Severity.INFO.rank
+    result = _run_engine(dsn, config, Severity.INFO.rank)
+    _print_skipped(result)
 
-    try:
-        issues = _collect_issues(dsn, config, threshold)
-    except Exception as exc:  # noqa: BLE001
-        click.echo(f"pgsleuth: {exc}", err=True)
-        sys.exit(2)
-
-    baseline = baseline_module.from_issues(issues)
+    baseline = baseline_module.from_issues(result.issues)
     baseline_module.dump(baseline, output_path)
     n = len(baseline.fingerprints)
     click.echo(
@@ -417,9 +400,9 @@ def baseline_prune(
     Loads the baseline, runs every enabled checker at info+ severity (a
     user's --min-severity is intentionally ignored here so we don't drop
     entries the current run merely wouldn't surface), and rewrites the
-    file with stale entries removed. Entries whose checker is no longer
-    registered (e.g. removed in a pgsleuth upgrade) are kept and warned
-    about — pass --ignore-unknown-checkers to silence.
+    file with stale entries removed. Entries whose checker did not run
+    in this invocation (filtered out, version-gated, or timed out) are
+    kept and warned about — pass --ignore-unknown-checkers to silence.
     """
     config = _build_config_from_options(
         config_path=config_path,
@@ -438,23 +421,10 @@ def baseline_prune(
 
     # Capture every finding regardless of user's --min-severity, so we don't
     # mistake "did not surface in this run" for "no longer present."
-    threshold = Severity.INFO.rank
-    try:
-        issues = _collect_issues(dsn, config, threshold)
-    except Exception as exc:  # noqa: BLE001
-        click.echo(f"pgsleuth: {exc}", err=True)
-        sys.exit(2)
+    result = _run_engine(dsn, config, Severity.INFO.rank, baseline=baseline)
+    _print_skipped(result)
 
-    result = baseline_module.filter_issues(issues, baseline)
-
-    # A checker is "known" for prune purposes only if it actually ran in
-    # this invocation. Treating registered-but-unrun checkers (--checkers
-    # filter, disabled in TOML, version-gated) as "known" would cause
-    # prune to drop their entries as stale — but we have no information
-    # about whether those findings still exist.
-    running = _running_checkers(config)
-    unknowns = baseline_module.unknown_checker_entries(baseline, running)
-
+    unknowns = result.unknown_baseline_entries
     if unknowns and not ignore_unknown_checkers:
         unknown_names = ", ".join(sorted({e.checker for e in unknowns}))
         click.echo(
@@ -466,7 +436,7 @@ def baseline_prune(
             err=True,
         )
 
-    pruned = baseline_module.prune(baseline, result.matched_fps, known_checkers=running)
+    pruned = baseline_module.prune(baseline, result.matched_baseline_fps, known_checkers=result.ran)
     pruned_set = set(pruned.fingerprints)
     removed = [e for e in baseline.fingerprints if e not in pruned_set]
 
@@ -513,78 +483,6 @@ def _resolve_baseline_path(explicit_path: Path | None, no_baseline: bool) -> Pat
         )
         return baseline_module.DEFAULT_BASELINE_PATH
     return None
-
-
-def _collect_issues(dsn: str, config: Config, threshold: int) -> list[Issue]:
-    """Connect, version-check, run enabled checkers, return filtered issues.
-
-    Shared by the `check` command and the upcoming `baseline write` /
-    `baseline prune` subcommands so the connect-and-run pipeline lives
-    in one place. On unsupported server version, prints a stderr message
-    and `sys.exit(2)` — propagates as `SystemExit`, which the caller's
-    `except Exception` does not catch (intentional). Other DB errors
-    propagate as ordinary exceptions for the caller to log.
-    """
-    with connect(dsn) as conn:
-        version = server_version_num(conn)
-        if version < SUPPORTED_VERSION_MIN:
-            click.echo(
-                f"pgsleuth: PostgreSQL {_pg_version_str(version)} is not supported. "
-                f"Supported versions: {SUPPORTED_VERSION_NAMES}.",
-                err=True,
-            )
-            sys.exit(2)
-        ctx = CheckerContext(conn=conn, config=config, server_version=version)
-        return list(_run_all(ctx, threshold))
-
-
-def _run_all(ctx: CheckerContext, threshold: int) -> Iterable[Issue]:
-    for cls in registry.all():
-        if not ctx.config.is_checker_enabled(cls.name):
-            continue
-        if not cls.supports(ctx.server_version):
-            click.echo(
-                f"[skipped] {cls.name} — requires PostgreSQL "
-                f"{_pg_version_label(cls.min_version, cls.max_version)} "
-                f"(connected: {_pg_version_str(ctx.server_version)})",
-                err=True,
-            )
-            continue
-
-        timeout_ms = ctx.config.statement_timeout_for(cls.name)
-        cm = statement_timeout(ctx.conn, timeout_ms) if timeout_ms is not None else nullcontext()
-        # Materialize per-checker so a QueryCanceled mid-yield discards partial
-        # findings rather than surfacing a half-result.
-        try:
-            with cm:
-                checker_issues = list(cls().run(ctx))
-        except psycopg.errors.QueryCanceled:
-            click.echo(
-                f"[skipped] {cls.name} — exceeded statement_timeout of {timeout_ms}ms",
-                err=True,
-            )
-            continue
-
-        for issue in checker_issues:
-            if issue.severity.rank >= threshold:
-                yield issue
-
-
-def _pg_version_str(num: int) -> str:
-    # PG10 changed the encoding: pre-10 is M_mm_pp (e.g. 90603 = 9.6.3),
-    # post-10 is M0_mmmm (e.g. 150004 = 15.4).
-    if num >= 100000:
-        return f"{num // 10000}.{num % 10000}"
-    return f"{num // 10000}.{(num // 100) % 100}"
-
-
-def _pg_version_label(min_version: int | None, max_version: int | None) -> str:
-    parts = []
-    if min_version is not None:
-        parts.append(f"{min_version // 10000}+")
-    if max_version is not None:
-        parts.append(f"<{max_version // 10000}")
-    return " and ".join(parts) if parts else "any"
 
 
 if __name__ == "__main__":

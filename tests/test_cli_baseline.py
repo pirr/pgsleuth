@@ -13,6 +13,8 @@ from pgsleuth.baseline import BASELINE_VERSION, fingerprint_for
 from pgsleuth.checkers.base import Issue, Severity
 from pgsleuth.cli import main
 
+from .conftest import fake_engine_run
+
 
 @contextmanager
 def _fake_connect(_dsn: str):
@@ -54,14 +56,16 @@ def test_check_with_baseline_suppresses_known() -> None:
             ],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[
-                    _issue("missing_fk_index", "public.orders(user_id)"),
-                    _issue("missing_fk_index", "public.invoices(customer_id)"),
-                ],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run(
+                    [
+                        _issue("missing_fk_index", "public.orders(user_id)"),
+                        _issue("missing_fk_index", "public.invoices(customer_id)"),
+                    ]
+                ),
             ),
         ):
             result = runner.invoke(
@@ -83,14 +87,16 @@ def test_check_with_baseline_reports_new_findings() -> None:
         baseline = Path("baseline.json")
         _write_baseline(baseline, [("missing_fk_index", "public.orders(user_id)")])
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[
-                    _issue("missing_fk_index", "public.orders(user_id)"),  # baselined
-                    _issue("missing_fk_index", "public.audit_log(user_id)"),  # NEW
-                ],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run(
+                    [
+                        _issue("missing_fk_index", "public.orders(user_id)"),  # baselined
+                        _issue("missing_fk_index", "public.audit_log(user_id)"),  # NEW
+                    ]
+                ),
             ),
         ):
             result = runner.invoke(
@@ -112,11 +118,11 @@ def test_check_autodiscovers_default_baseline_in_cwd() -> None:
             [("missing_fk_index", "public.orders(user_id)")],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.orders(user_id)")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.orders(user_id)")]),
             ),
         ):
             result = runner.invoke(main, ["check", "--dsn", "postgresql://x/y"])
@@ -134,11 +140,11 @@ def test_check_no_baseline_disables_autodiscovery() -> None:
             [("missing_fk_index", "public.orders(user_id)")],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.orders(user_id)")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.orders(user_id)")]),
             ),
         ):
             result = runner.invoke(main, ["check", "--dsn", "postgresql://x/y", "--no-baseline"])
@@ -154,11 +160,11 @@ def test_check_no_baseline_with_no_file_runs_normally() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.orders(user_id)")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.orders(user_id)")]),
             ),
         ):
             result = runner.invoke(main, ["check", "--dsn", "postgresql://x/y"])
@@ -174,8 +180,8 @@ def test_check_baseline_corrupt_json_exits_2() -> None:
         baseline = Path("baseline.json")
         baseline.write_text("{ not valid json")
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
         ):
             result = runner.invoke(
                 main,
@@ -190,8 +196,8 @@ def test_check_baseline_path_does_not_exist_exits_2() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
         ):
             result = runner.invoke(
                 main,
@@ -208,8 +214,8 @@ def test_check_explicit_and_no_baseline_conflict() -> None:
         baseline = Path("baseline.json")
         _write_baseline(baseline, [])
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
         ):
             result = runner.invoke(
                 main,
@@ -250,11 +256,11 @@ def test_check_baseline_no_stale_warning_for_checkers_filtered_out() -> None:
         # Run only one checker. Mock _run_all to behave like that filter:
         # it returns only findings from the enabled checker.
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.orders(user_id)")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.orders(user_id)")]),
             ),
         ):
             result = runner.invoke(
@@ -283,9 +289,14 @@ def test_check_baseline_warns_on_stale_entries() -> None:
         baseline = Path("baseline.json")
         _write_baseline(baseline, [("missing_fk_index", "public.fixed_long_ago")])
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
-            patch("pgsleuth.cli._run_all", return_value=[]),  # nothing reproduces
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
+            # missing_fk_index ran but produced nothing — its baseline entry is stale,
+            # not unknown. Pass `ran` explicitly so the helper knows the checker ran.
+            patch(
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run(ran=frozenset({"missing_fk_index"})),
+            ),
         ):
             result = runner.invoke(
                 main,
@@ -305,14 +316,16 @@ def test_baseline_write_creates_file_with_default_path() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[
-                    _issue("missing_fk_index", "public.orders(user_id)"),
-                    _issue("missing_primary_key", "public.events"),
-                ],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run(
+                    [
+                        _issue("missing_fk_index", "public.orders(user_id)"),
+                        _issue("missing_primary_key", "public.events"),
+                    ]
+                ),
             ),
         ):
             result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
@@ -332,11 +345,11 @@ def test_baseline_write_to_custom_output_path() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.t")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.t")]),
             ),
         ):
             result = runner.invoke(
@@ -367,11 +380,11 @@ def test_baseline_write_overwrites_existing_file() -> None:
         )
 
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.new")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.new")]),
             ),
         ):
             result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
@@ -398,9 +411,9 @@ def test_baseline_write_captures_all_severities() -> None:
         warning_issue = _issue("missing_fk_index", "public.t")
 
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
-            patch("pgsleuth.cli._run_all", return_value=[info_issue, warning_issue]),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.run", side_effect=fake_engine_run([info_issue, warning_issue])),
         ):
             result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
 
@@ -414,9 +427,9 @@ def test_baseline_write_empty_when_no_findings() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
-            patch("pgsleuth.cli._run_all", return_value=[]),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.run", side_effect=fake_engine_run()),
         ):
             result = runner.invoke(main, ["baseline", "write", "--dsn", "postgresql://x/y"])
 
@@ -430,11 +443,11 @@ def test_baseline_write_uses_pgsleuth_dsn_envvar() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.t")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.t")]),
             ),
         ):
             result = runner.invoke(
@@ -532,11 +545,11 @@ def test_baseline_prune_removes_stale_entries() -> None:
             ],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.still_here")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.still_here")]),
             ),
         ):
             result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
@@ -562,11 +575,11 @@ def test_baseline_prune_keeps_unknown_checker_entries_with_warning() -> None:
             ],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.match")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.match")]),
             ),
         ):
             result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
@@ -589,9 +602,9 @@ def test_baseline_prune_ignore_unknown_checkers_silences_warning() -> None:
             [("removed_checker_v1", "public.unknown_obj")],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
-            patch("pgsleuth.cli._run_all", return_value=[]),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.run", side_effect=fake_engine_run()),
         ):
             result = runner.invoke(
                 main,
@@ -628,11 +641,11 @@ def test_baseline_prune_dry_run_does_not_write() -> None:
         before_mtime = path.stat().st_mtime_ns
 
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.match")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.match")]),
             ),
         ):
             result = runner.invoke(
@@ -662,11 +675,11 @@ def test_baseline_prune_uses_explicit_baseline_path() -> None:
             ],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.match")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.match")]),
             ),
         ):
             result = runner.invoke(
@@ -684,8 +697,8 @@ def test_baseline_prune_missing_baseline_file_exits_2() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
         ):
             result = runner.invoke(
                 main,
@@ -708,8 +721,8 @@ def test_baseline_prune_corrupt_baseline_exits_2() -> None:
     with runner.isolated_filesystem():
         Path("pgsleuth.baseline.json").write_text("{ not valid json")
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
         ):
             result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
 
@@ -734,11 +747,11 @@ def test_baseline_prune_does_not_drop_entries_for_unrun_checkers() -> None:
             ],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[_issue("missing_fk_index", "public.orders(user_id)")],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run([_issue("missing_fk_index", "public.orders(user_id)")]),
             ),
         ):
             result = runner.invoke(
@@ -774,14 +787,16 @@ def test_baseline_prune_no_changes_when_all_match() -> None:
             ],
         )
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[
-                    _issue("missing_fk_index", "public.a"),
-                    _issue("missing_fk_index", "public.b"),
-                ],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run(
+                    [
+                        _issue("missing_fk_index", "public.a"),
+                        _issue("missing_fk_index", "public.b"),
+                    ]
+                ),
             ),
         ):
             result = runner.invoke(main, ["baseline", "prune", "--dsn", "postgresql://x/y"])
@@ -799,14 +814,16 @@ def test_check_baseline_json_output_includes_suppressed() -> None:
         baseline = Path("baseline.json")
         _write_baseline(baseline, [("missing_fk_index", "public.orders(user_id)")])
         with (
-            patch("pgsleuth.cli.connect", _fake_connect),
-            patch("pgsleuth.cli.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
             patch(
-                "pgsleuth.cli._run_all",
-                return_value=[
-                    _issue("missing_fk_index", "public.orders(user_id)"),
-                    _issue("missing_fk_index", "public.audit_log(user_id)"),
-                ],
+                "pgsleuth.engine.run",
+                side_effect=fake_engine_run(
+                    [
+                        _issue("missing_fk_index", "public.orders(user_id)"),
+                        _issue("missing_fk_index", "public.audit_log(user_id)"),
+                    ]
+                ),
             ),
         ):
             result = runner.invoke(
@@ -830,3 +847,55 @@ def test_check_baseline_json_output_includes_suppressed() -> None:
     assert payload["suppressed"] == 1
     assert len(payload["issues"]) == 1
     assert payload["issues"][0]["object_name"] == "public.audit_log(user_id)"
+    # No checkers were skipped in this run.
+    assert payload["skipped"] == []
+
+
+def test_check_json_output_includes_skipped_checkers() -> None:
+    """Checkers the engine couldn't run to completion (version-gated, timed out)
+    must be surfaced in the JSON payload — a CI consumer parsing JSON should
+    not see "no issues" while half the checks silently didn't run.
+    """
+    from pgsleuth.engine import RunResult, SkippedChecker
+
+    def _engine_run_with_skips(ctx, *, threshold, baseline=None):
+        return RunResult(
+            issues=[],
+            skipped=(
+                SkippedChecker(
+                    checker="needs_pg17",
+                    reason="version_gated",
+                    detail="requires PostgreSQL 17+ (connected: 15.4)",
+                ),
+                SkippedChecker(
+                    checker="slow_index_scan",
+                    reason="statement_timeout",
+                    detail="exceeded statement_timeout of 5000ms",
+                ),
+            ),
+            ran=frozenset({"missing_fk_index"}),
+        )
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with (
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.run", side_effect=_engine_run_with_skips),
+        ):
+            result = runner.invoke(
+                main,
+                ["check", "--dsn", "postgresql://x/y", "--format", "json", "--no-baseline"],
+            )
+
+    assert result.exit_code == 0
+    start = result.output.index("{")
+    payload = json.loads(result.output[start:])
+    assert payload["issues"] == []
+    skipped = payload["skipped"]
+    assert len(skipped) == 2
+    by_checker = {s["checker"]: s for s in skipped}
+    assert by_checker["needs_pg17"]["reason"] == "version_gated"
+    assert "17+" in by_checker["needs_pg17"]["detail"]
+    assert by_checker["slow_index_scan"]["reason"] == "statement_timeout"
+    assert "5000ms" in by_checker["slow_index_scan"]["detail"]
