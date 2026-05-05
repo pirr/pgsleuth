@@ -238,7 +238,11 @@ def check(
         )
 
     if output_format == "json":
-        json_reporter.render(result.issues, suppressed=result.suppressed_count)
+        json_reporter.render(
+            result.issues,
+            suppressed=result.suppressed_count,
+            skipped=result.skipped,
+        )
     else:
         text_reporter.render(result.issues, suppressed=result.suppressed_count)
 

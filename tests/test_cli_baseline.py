@@ -847,3 +847,55 @@ def test_check_baseline_json_output_includes_suppressed() -> None:
     assert payload["suppressed"] == 1
     assert len(payload["issues"]) == 1
     assert payload["issues"][0]["object_name"] == "public.audit_log(user_id)"
+    # No checkers were skipped in this run.
+    assert payload["skipped"] == []
+
+
+def test_check_json_output_includes_skipped_checkers() -> None:
+    """Checkers the engine couldn't run to completion (version-gated, timed out)
+    must be surfaced in the JSON payload — a CI consumer parsing JSON should
+    not see "no issues" while half the checks silently didn't run.
+    """
+    from pgsleuth.engine import RunResult, SkippedChecker
+
+    def _engine_run_with_skips(ctx, *, threshold, baseline=None):
+        return RunResult(
+            issues=[],
+            skipped=(
+                SkippedChecker(
+                    checker="needs_pg17",
+                    reason="version_gated",
+                    detail="requires PostgreSQL 17+ (connected: 15.4)",
+                ),
+                SkippedChecker(
+                    checker="slow_index_scan",
+                    reason="statement_timeout",
+                    detail="exceeded statement_timeout of 5000ms",
+                ),
+            ),
+            ran=frozenset({"missing_fk_index"}),
+        )
+
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        with (
+            patch("pgsleuth.engine.connect", _fake_connect),
+            patch("pgsleuth.engine.server_version_num", return_value=150004),
+            patch("pgsleuth.engine.run", side_effect=_engine_run_with_skips),
+        ):
+            result = runner.invoke(
+                main,
+                ["check", "--dsn", "postgresql://x/y", "--format", "json", "--no-baseline"],
+            )
+
+    assert result.exit_code == 0
+    start = result.output.index("{")
+    payload = json.loads(result.output[start:])
+    assert payload["issues"] == []
+    skipped = payload["skipped"]
+    assert len(skipped) == 2
+    by_checker = {s["checker"]: s for s in skipped}
+    assert by_checker["needs_pg17"]["reason"] == "version_gated"
+    assert "17+" in by_checker["needs_pg17"]["detail"]
+    assert by_checker["slow_index_scan"]["reason"] == "statement_timeout"
+    assert "5000ms" in by_checker["slow_index_scan"]["detail"]
