@@ -8,6 +8,7 @@ from pgsleuth.checkers import (  # noqa: F401
     json_over_jsonb,
     missing_fk_index,
     missing_primary_key,
+    missing_replica_identity,
     not_valid_constraints,
     primary_key_type,
     redundant_index,

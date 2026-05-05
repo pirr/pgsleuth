@@ -78,7 +78,6 @@ When a checker hits `statement_timeout` or is version-gated, the skip goes to st
 
 Get to ~30 rules so the tool is taken seriously next to schemacrawler. High-leverage adds, in rough order:
 
-- **`missing_replica_identity`** — tables with no `REPLICA IDENTITY` (extends `missing_primary_key` to cover tables with explicit replica identity but no PK).
 - **`partition_without_pk`** — partitioned tables where the partition key isn't part of the PK.
 - **`default_now_text`** — `default 'now()'` (string literal!) instead of `default now()`.
 

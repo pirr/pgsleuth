@@ -10,6 +10,7 @@ Each rule has a dedicated page covering what it catches, why it matters, how to 
 | [`json_over_jsonb`](json_over_jsonb.md) | info | Columns typed `json`; `jsonb` supports indexing and is faster on read. |
 | [`missing_fk_index`](missing_fk_index.md) | warning | Foreign-key columns not covered by a leading index — slow cascades and joins. |
 | [`missing_primary_key`](missing_primary_key.md) | warning | Ordinary tables without a primary key. |
+| [`missing_replica_identity`](missing_replica_identity.md) | warning | Tables whose effective `REPLICA IDENTITY` is empty — logical UPDATE/DELETE replication breaks. |
 | [`not_valid_constraints`](not_valid_constraints.md) | error | FK and CHECK constraints stuck at `NOT VALID`. |
 | [`primary_key_type`](primary_key_type.md) | warning | Primary keys typed as `integer` / `smallint` will eventually overflow. |
 | [`redundant_index`](redundant_index.md) | info | An index whose column list is a strict prefix of another on the same table. |

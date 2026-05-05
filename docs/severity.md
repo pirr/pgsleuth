@@ -35,6 +35,7 @@ By default, `pgsleuth check` runs at `--min-severity info`, which means warnings
 | Rule | Why it's a warning |
 | --- | --- |
 | `missing_primary_key` | Logical replication breaks, ORM identity becomes ambiguous, common tooling refuses to operate. |
+| `missing_replica_identity` | Strictly-correct subset of the replica-identity concern — fires when the table's effective REPLICA IDENTITY is empty (default + no PK, or explicit NOTHING) so logical UPDATE/DELETE replication will silently lose row-identity. |
 | `primary_key_type` | `integer` PK overflow is months or years away on most tables; the migration to fix it is the painful part. |
 | `column_value_at_risk` | Sequence-backed columns past 70% of `max_value` will overflow soon. Reactive companion to `primary_key_type` — fires before the failure but after the runway is short. |
 | `missing_fk_index` | Slow cascades and slow joins. Often invisible until a parent-side `DELETE` migration or a 10× traffic spike. |
