@@ -76,14 +76,9 @@ When a checker hits `statement_timeout` or is version-gated, the skip goes to st
 
 ## Medium-term — more rules
 
-Get from 9 to ~30 rules so the tool is taken seriously next to schemacrawler. High-leverage adds, in rough order:
+Get to ~30 rules so the tool is taken seriously next to schemacrawler. High-leverage adds, in rough order:
 
-- **`unused_index`** — `pg_stat_user_indexes.idx_scan = 0` over a configurable window. Pairs naturally with `redundant_index`.
-- **`varchar_length`** — `varchar(N)` where `text` would be equivalent (Postgres has no perf benefit to a length cap).
-- **`timestamp_without_tz`** — `timestamp` columns that should almost certainly be `timestamptz`.
-- **`json_over_jsonb`** — `json` columns that should be `jsonb`.
 - **`missing_replica_identity`** — tables with no `REPLICA IDENTITY` (extends `missing_primary_key` to cover tables with explicit replica identity but no PK).
-- **`fk_without_on_delete`** — foreign keys without an explicit `ON DELETE` policy (forcing the team to think about cascade vs restrict vs set null).
 - **`partition_without_pk`** — partitioned tables where the partition key isn't part of the PK.
 - **`default_now_text`** — `default 'now()'` (string literal!) instead of `default now()`.
 

@@ -38,7 +38,9 @@ By default, `pgsleuth check` runs at `--min-severity info`, which means warnings
 | `primary_key_type` | `integer` PK overflow is months or years away on most tables; the migration to fix it is the painful part. |
 | `column_value_at_risk` | Sequence-backed columns past 70% of `max_value` will overflow soon. Reactive companion to `primary_key_type` — fires before the failure but after the runway is short. |
 | `missing_fk_index` | Slow cascades and slow joins. Often invisible until a parent-side `DELETE` migration or a 10× traffic spike. |
+| `fk_without_on_delete` | FKs default to `NO ACTION`, which silently blocks parent deletes. Forcing the team to pick `CASCADE` / `RESTRICT` / `SET NULL` makes the policy explicit. |
 | `three_state_boolean` | `WHERE col = false` silently excludes nulls. Bug surfaces as "where did half my users go?" under SQL three-valued logic. |
+| `timestamp_without_tz` | `timestamp` columns store wall-clock time with no zone — comparisons across regions silently disagree, daylight-saving crossings duplicate or skip rows. |
 
 ## info — schema smells worth knowing
 
@@ -47,6 +49,9 @@ A rule fires at `info` when the cost is real but small or context-dependent enou
 | Rule | Why it's info |
 | --- | --- |
 | `redundant_index` | Write amplification, disk space, plan-flip risk are real, but rarely production-critical. False positives are conceivable (the prefix index occasionally pulls weight via `INCLUDE` columns or planner quirks). |
+| `unused_index` | Pure write-cost on a never-scanned index, but stat-window false positives are easy to trip into (recently-created index, recent stats reset, replica-only reads, infrequent batch jobs). |
+| `json_over_jsonb` | `jsonb` is the right choice for almost every workload (indexable, faster on read), but `json` is sometimes deliberate for write-once payloads or to preserve key order. |
+| `varchar_length` | `varchar(N)` and `text` are equivalent in Postgres; the cap is decorative. Worth flagging, but rarely worth a migration on its own. |
 
 ## Choosing severity for a new rule
 
